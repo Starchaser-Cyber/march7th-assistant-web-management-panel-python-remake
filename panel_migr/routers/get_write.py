@@ -46,8 +46,8 @@ def h_preview_token(request) -> dict:
         secret = ""
     if secret == "":
         return {"ok": False, "msg": "预览服务未部署（服务器缺少 preview_secret）"}
-    # 与 preview_server.py 一致：UTC 日期 + HMAC-SHA256 前 32 位，按天轮换
-    day = time.strftime("%Y%m%d", time.gmtime())
+    # 与 preview_server.py 一致：本地日期 + HMAC-SHA256 前 32 位，按天轮换
+    day = time.strftime("%Y%m%d")
     token = hmac.new(secret.encode("utf-8"), day.encode("ascii"), hashlib.sha256).hexdigest()[:32]
     return {"ok": True, "token": token}
 

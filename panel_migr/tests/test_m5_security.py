@@ -216,7 +216,7 @@ def test_preview_token_ok(monkeypatch):
     assert r.status_code == 200
     d = r.json()
     assert d["ok"] is True
-    day = time.strftime("%Y%m%d", time.gmtime())
+    day = time.strftime("%Y%m%d")
     want = hmac_mod.new(b"s3cret", day.encode(), hashlib.sha256).hexdigest()[:32]
     assert d["token"] == want and len(d["token"]) == 32
 

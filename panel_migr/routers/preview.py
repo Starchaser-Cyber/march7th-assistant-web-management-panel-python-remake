@@ -123,10 +123,10 @@ async def ws_h264(websocket) -> None:
     ws_url = base.replace("http://", "ws://", 1) + "/ws"
     keep = [k for k in ("token", "res", "quality") if k + "=" in websocket.url.query]
     if keep:
+        # 保留 key=value 形式拼接（丢键名会让上游 parse_qs 取不到 token → 403）
         qs = "&".join(
-            websocket.url.query.split(k + "=", 1)[1].split("&")[0]
+            k + "=" + websocket.url.query.split(k + "=", 1)[1].split("&")[0]
             for k in keep
-            if k + "=" in websocket.url.query
         )
         ws_url += "?" + qs
 

@@ -169,10 +169,10 @@ def test_day_token_matches_reference_algorithm():
     assert len(got) == 32 and all(c in "0123456789abcdef" for c in got)
 
 
-def test_day_token_defaults_to_utc_today():
+def test_day_token_defaults_to_local_today():
     import time
     got = pv.day_token("x")
-    ref = pv.day_token("x", time.strftime("%Y%m%d", time.gmtime()))
+    ref = pv.day_token("x", time.strftime("%Y%m%d"))
     assert got == ref
 
 

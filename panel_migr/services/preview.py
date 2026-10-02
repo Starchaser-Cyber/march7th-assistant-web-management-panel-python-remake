@@ -45,7 +45,8 @@ def reset_state() -> None:
 # ===== token（与 PHP preview_token()/preview_server day_token() 算法逐字节一致）=====
 
 def day_token(secret: str, day: str | None = None) -> str:
-    d = day or time.strftime("%Y%m%d", time.gmtime())
+    # 本地日期（与容器 preview_server day_token() 的 time.strftime('%Y%m%d') 口径一致）
+    d = day or time.strftime("%Y%m%d")
     return hmac.new(secret.encode(), d.encode(), hashlib.sha256).hexdigest()[:32]
 
 
