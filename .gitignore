@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.env
+.env.*
+.panel_pass.php
+data/
+backups/
+sessions/
+*.log
+*.sqlite
+*.bak
+*.tmp

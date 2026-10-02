@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>M7A WebUI · March7th 管理面板</title>
+<meta name="theme-color" content="#ec4899">
+<link rel="manifest" href="?manifest=1">
+<link rel="icon" type="image/png" href="?icon=1&size=192">
+<link rel="apple-touch-icon" href="?icon=1&size=192">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="M7A WebUI">
+<link rel="stylesheet" href="/static/panel.css">
+</head>
+<body>
+
+<!-- v1.15+：磨砂玻璃背景光斑层（纯装饰，pointer-events:none，不参与交互） -->
+<div class="bg-layer" aria-hidden="true">
+  <span class="blob blob-1"></span>
+  <span class="blob blob-2"></span>
+  <span class="blob blob-3"></span>
+</div>
+
+{% if  not isAuth %}
+<!-- ===== 登录页 ===== -->
+<div class="auth-wrap">
+  <div class="auth-card">
+    <div class="auth-logo">M7A</div>
+    <h1 class="grad-text">March7th 管理面板</h1>
+    <p class="sub">{{ ('首次使用，请设置访问密码' if needSetup else '请输入访问密码') }}</p>
+    {% if err %}<div class="msg err">{{ err }}</div>{% endif %}
+    {% if needSetup %}
+    <form method="post">
+      <input type="hidden" name="action" value="setup_pass">
+      <input type="password" name="pass1" placeholder="设置密码（至少 6 位）" autocomplete="new-password" required>
+      <input type="password" name="pass2" placeholder="再次输入密码" autocomplete="new-password" required>
+      <button type="submit" class="btn green">设置并进入</button>
+    </form>
+    {% else %}
+    <form method="post">
+      <input type="hidden" name="action" value="login">
+      <input type="password" name="pass" placeholder="访问密码" autocomplete="current-password" required>
+      <button type="submit" class="btn primary">登录</button>
+    </form>
+    {% endif %}
+    <div class="tip">密码仅保存在面板目录的 .panel_pass.php 文件中</div>
+  </div>
+</div>
+
+{% else %}
+<!-- ===== 主界面：左侧边栏 + 内容区 ===== -->
+<div class="layout">
+
+  <!-- 侧边栏 -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-badge">M7A</div>
+      <div>
+        <div class="logo-title grad-text">M7A WebUI</div>
+        <div class="logo-sub">管理面板 v{{ PANEL_VERSION }} (Python)</div>
+      </div>
+    </div>
+
+    <!-- 实例切换器 -->
+    <div class="inst-switcher">
+      <form method="post" id="instForm" style="display:flex;gap:6px;align-items:center;">
+        {{ csrf_field() }}
+        <input type="hidden" name="action" value="instance_switch">
+        <select name="instance_id" class="inst-select" onchange="document.getElementById('instForm').submit()" title="切换当前实例">
+          {% for it in instances_load() %}{% set cur = instance_current() %}
+          <option value="{{ it['id'] }}" {{ ('selected' if it['id'] == cur['id'] else '') }}>{{ it['name'] }} ({{ it['container'] }})</option>
+          {% endfor %}
+        </select>
+      </form>
+      <button type="button" class="icon-btn" onclick="openInstModal()" title="管理实例">⚙️</button>
+    </div>
+
+    <nav class="sidebar-nav">
+      <button class="nav-item active" data-tab="overview" onclick="switchTab('overview')"><span class="nav-icon">📊</span>概览</button>
+      <button class="nav-item" data-tab="tasks" onclick="switchTab('tasks')"><span class="nav-icon">🚀</span>任务</button>
+      <button class="nav-item" data-tab="config" onclick="switchTab('config')"><span class="nav-icon">⚙️</span>配置</button>
+      <button class="nav-item" data-tab="log" onclick="switchTab('log')"><span class="nav-icon">📝</span>日志</button>
+    </nav>
+
+    <div class="sidebar-bottom">
+      <span class="status-badge" id="statusBadge" style="justify-content:center;"><span class="dot"></span><span class="status-text">检测中…</span></span>
+      <div class="sidebar-bottom-row">
+        <button class="icon-btn" onclick="openSearch()" title="全局搜索（Ctrl+K）">🔍</button>
+        <button class="icon-btn" id="themeBtn" onclick="toggleTheme()" title="切换主题">🌙</button>
+        <form method="post" style="display:inline;flex:1;">{{ csrf_field() }}<input type="hidden" name="action" value="logout"><button type="submit" class="logout-btn">退出</button></form>
+      </div>
+    </div>
+  </aside>
+  <div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebar()"></div>
+
+  <!-- 内容区 -->
+  <div class="content">
+
+    <!-- 移动端顶栏 -->
+    <div class="mobile-topbar">
+      <button class="icon-btn" onclick="openSidebar()">☰</button>
+      <button class="icon-btn" onclick="openSearch()" title="全局搜索">🔍</button>
+      <button class="icon-btn" id="themeBtnM" onclick="toggleTheme()" title="切换主题">🎀</button>
+      <span class="grad-text" style="font-weight:800;font-size:16px;">M7A WebUI</span>
+      <span class="status-badge" id="statusBadgeM" style="margin-left:auto;"><span class="dot"></span><span class="status-text">检测中…</span></span>
+    </div>
+
+    <!-- 自动更新提醒 -->
+    <div class="update-banner" id="updateBanner" style="display:none;">
+      <div class="update-inner">
+        <div class="update-icon">🆕</div>
+        <div class="update-info">
+          <div class="update-title">发现新版本 v<span id="updLatest"></span>（当前 v<span id="updCurrent"></span>）</div>
+          <div class="update-note" id="updNote"></div>
+        </div>
+        <div class="update-actions">
+          <button class="btn small" id="updBtn" onclick="doUpdate()">一键更新</button>
+          <button class="btn gray small" onclick="hideUpdate()">稍后</button>
+          <button class="btn gray small" onclick="ignoreVersion()">忽略此版本</button>
+        </div>
+      </div>
+    </div>
+
+    {% if msg %}<div class="msg ok">✅ {{ msg }}</div>{% endif %}
+    {% if err %}<div class="msg err">❌ {{ err }}</div>{% endif %}
+
+    <!-- ===== 概览 ===== -->
+    
+    <div class="page active" id="panel-overview">
+      <div class="page-head">
+        <div class="page-title"><span class="pt-icon">📊</span>概览</div>
+        <div class="page-desc">容器状态、快捷操作与基本信息</div>
+      </div>
+
+      <div class="card">
+        <h2><span class="icon">📦</span> 容器状态 <button class="btn small gray" onclick="refreshStatus()" style="margin-left:auto;">刷新</button></h2>
+        <div class="codebox" id="statusBox">{{ st_status }}</div>
+      </div>
+
+      <!-- v1.19：游戏画面实时预览 -->
+      <div class="card" id="previewCard">
+        <h2><span class="icon">🎮</span> 游戏画面 <span class="badge" id="pvBadge" style="background:var(--muted,#8a8f98);color:#fff;">未开启</span>
+          <span style="margin-left:auto;display:flex;gap:6px;align-items:center;">
+            <select id="pvRes" onchange="pvSetRes(this.value)" style="display:none;font-size:12px;padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:var(--card2);color:var(--text);">
+              <option value="720p">720P 流畅</option>
+              <option value="480p">480P 省流</option>
+            </select>
+            <button type="button" class="btn small gray" id="pvEnc" onclick="pvToggleEnc()" style="display:none;" title="H.264 极致档：更低延迟与码率（需服务器安装 ffmpeg）">⚡H.264</button>
+            <button class="btn small gray" id="pvFull" onclick="pvFullscreen()" style="display:none;">全屏</button>
+            <button class="btn small" id="pvToggle" onclick="pvToggle()">开启预览</button>
+          </span>
+        </h2>
+        <div id="pvBox" style="position:relative;width:100%;aspect-ratio:16/9;background:#000;border-radius:10px;overflow:hidden;display:none;">
+          <img id="pvImg" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;" alt="game preview">
+          <video id="pvVideo" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:none;" muted playsinline autoplay></video>
+          <div id="pvMsg" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#aab2bd;font-size:14px;background:rgba(0,0,0,.55);text-align:center;padding:0 16px;">正在连接…</div>
+        </div>
+        <p class="tip" style="margin:10px 0 0;">云游戏运行期间可实时观看画面（约15帧/秒，任务执行时画面持续变化）；m7a 每天仅在任务时段开启浏览器，其余时间无画面属正常。预览已走面板登录鉴权，请勿泄露面板地址与预览令牌。</p>
+      </div>
+
+      <div class="card">
+        
+        <h2><span class="icon">📈</span> 资源监控
+          <span class="badge" id="monLiveBadge" style="background:var(--green,#22c55e);color:#fff;">实时</span>
+          <span class="mon-range">
+            <button type="button" class="btn small" data-range="1m" onclick="setMonRange('1m')">近1分钟</button>
+            <button type="button" class="btn small active" data-range="1h" onclick="setMonRange('1h')">近1小时</button>
+            <button type="button" class="btn small" data-range="1d" onclick="setMonRange('1d')">近1天</button>
+          </span>
+          <select id="monInterval" onchange="setMonitorInterval(this.value)" style="margin-left:auto;font-size:12px;padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:var(--card2);color:var(--text);">
+            <option value="1"{{ (' selected' if _monIv == 1 else '') }}>1秒</option>
+            <option value="2"{{ (' selected' if _monIv == 2 else '') }}>2秒</option>
+            <option value="5"{{ (' selected' if _monIv == 5 else '') }}>5秒</option>
+            <option value="10"{{ (' selected' if _monIv == 10 else '') }}>10秒</option>
+            <option value="30"{{ (' selected' if _monIv == 30 else '') }}>30秒</option>
+            <option value="60"{{ (' selected' if _monIv == 60 else '') }}>60秒</option>
+          </select>
+          <button class="btn small gray" onclick="loadMonitor(true)" style="margin-left:8px;">立即刷新</button>
+        </h2>
+        <div class="mon-grid">
+          <div class="mon-stat" id="monCpu"><div class="m-label">CPU 使用率</div><div class="m-value">--</div><div class="m-bar"><i style="width:0%"></i></div></div>
+          <div class="mon-stat" id="monMem"><div class="m-label">内存使用率</div><div class="m-value">--</div><div class="m-bar"><i style="width:0%"></i></div></div>
+          <div class="mon-stat" id="monDisk"><div class="m-label">磁盘使用率</div><div class="m-value">--</div><div class="m-bar"><i style="width:0%"></i></div></div>
+          <div class="mon-stat" id="monLoad"><div class="m-label">系统负载</div><div class="m-value">--</div><div class="m-sub">1分钟均值</div></div>
+          <div class="mon-stat" id="monNet"><div class="m-label">网络速率</div><div class="m-value" style="font-size:16px;">--</div><div class="m-sub" id="monNetSub">↓下载 ↑上传</div></div>
+          <div class="mon-stat" id="monUp"><div class="m-label">运行时长</div><div class="m-value" style="font-size:16px;">--</div><div class="m-sub" id="monUpSub">容器状态：检测中…</div></div>
+        </div>
+        <div class="mon-legend"><span class="lg"><span class="dot" style="background:#ec4899;"></span>CPU</span><span class="lg"><span class="dot" style="background:#38bdf8;"></span>内存</span><span class="lg"><span class="dot" style="background:#f59e0b;"></span>磁盘</span></div>
+        <div class="mon-chart" id="monChart"><div style="text-align:center;color:var(--muted);padding-top:110px;font-size:13px;">图表加载中…（首次采样约需 1 秒）</div></div>
+        <div class="mon-host" id="monHost"></div>
+        <p class="tip mon-tip" style="margin:10px 0 0;">实时采样：打开面板时每 <span id="monIvText">{{ _monIv }}</span> 秒自动采样；想不打开面板也有曲线，在宝塔「计划任务」添加 Shell 脚本每 1 分钟执行：<code id="monCronCmd">{{ _monCron }}</code><br><span style="color:var(--muted);font-size:12px;">提示：命令中的 IP 地址会自动取你当前访问面板的地址；如果服务器实际 IP 与此不同（例如用域名访问、内网/外网 IP 不一致），请把命令里的 IP 改成你服务器的实际 IP。</span></p>
+      </div>
+
+      <!-- v1.18：异常告警 -->
+      <div class="card">
+        <h2><span class="icon">🚨</span> 异常告警
+          <span class="badge" id="alertBadge" style="background:var(--primary-soft);color:var(--primary);">{{ ('已启用' if ( not empty(cfgVals['alert_enable'])  and  cfgVals['alert_enable'] == '1') else '未启用') }}</span>
+        </h2>
+        <div class="cfg-row">
+          <div class="cfg-label">启用告警<span class="cfg-tip">容器意外停止 / 任务中断时自动推送手机</span></div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;"><input type="checkbox" id="alertEnable" style="width:18px;height:18px;"{{ (' checked' if ( not empty(cfgVals['alert_enable'])  and  cfgVals['alert_enable'] == '1') else '') }}> 开启</label>
+        </div>
+        <div class="cfg-row">
+          <div class="cfg-label">推送通道</div>
+          <select id="alertChannel" class="cfg-select" style="max-width:280px;">
+            <option value="bark"{{ (' selected' if (((cfgVals['alert_channel']) | default('bark', true)) == 'bark') else '') }}>Bark（iOS / macOS 推送）</option>
+            <option value="serverchan"{{ (' selected' if (((cfgVals['alert_channel']) | default('', true)) == 'serverchan') else '') }}>Server酱（微信推送）</option>
+            <option value="webhook"{{ (' selected' if (((cfgVals['alert_channel']) | default('', true)) == 'webhook') else '') }}>Webhook（自定义 JSON 地址）</option>
+          </select>
+        </div>
+        <div class="cfg-row">
+          <div class="cfg-label">接收地址<span class="cfg-tip">Bark 填推送 Key；Server酱填 SendKey；Webhook 填完整 URL</span></div>
+          <input type="text" id="alertTarget" class="cfg-input-text" style="max-width:380px;" placeholder="如：xxxx-yyyy 或 https://..." value="{{ (cfgVals['alert_target'] | default('', true)) }}">
+        </div>
+        <div class="btn-group">
+          <button type="button" class="btn green" onclick="saveAlert()">💾 保存设置</button>
+          <button type="button" class="btn gray" onclick="testAlert()">📤 发送测试</button>
+          <button type="button" class="btn gray" onclick="toggleAlertHist()">📋 历史</button>
+        </div>
+        <div id="alertHistBox" style="display:none;margin-top:8px;max-height:240px;overflow:auto;border-top:1px dashed var(--border);padding-top:6px;"></div>
+
+        <p class="tip">巡检命令（宝塔「计划任务」Shell 脚本每 1 分钟执行，离线也能告警）：<code id="alerterCronCmd">{{ _alCron }}</code><br><span style="color:var(--muted);font-size:12px;">没挂 cron 时，面板打开期间也会巡检（约 45 秒一次）；配置保存后立即生效。</span></p>
+      </div>
+
+      <!-- v1.18：一键体检 -->
+      <div class="card">
+        <h2><span class="icon">🩺</span> 一键体检
+          <button type="button" class="btn small primary" id="doctorBtn" onclick="runDoctor()" style="margin-left:auto;">开始体检</button>
+        </h2>
+        <div class="doctor-box" id="doctorBox"><div class="doctor-item"><span class="d-ico">ℹ️</span><div class="d-msg">点击「开始体检」检查 Docker 权限、配置可写、推送配置、计划任务心跳、磁盘空间、镜像与面板版本等。</div></div></div>
+      </div>
+
+      <div class="card">
+        <h2><span class="icon">⚡</span> 快捷操作</h2>
+        <div class="btn-group">
+          {% for key, t in TASKS.items() %}
+          <form method="post" style="display:inline;">{{ csrf_field() }}<input type="hidden" name="action" value="{{ key }}"><button type="submit" class="btn primary">{{ t['icon'] ~ ' ' ~ t['label'] }}</button></form>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="card">
+        <h2><span class="icon">🚪</span> 任务结束后设置 <span class="badge" id="afterFinishBadge" style="background:{{ ('var(--green,#22c55e)' if afVal == 'Exit' else 'var(--gray,#9ca3af)') }};color:#fff;">{{ ('自动退出' if afVal == 'Exit' else '保持界面') }}</span></h2>
+        <div class="btn-group">
+          <button type="button" class="btn primary" onclick="setAfterFinish('Exit')">🚪 跑完自动退出游戏</button>
+          <button type="button" class="btn gray" onclick="setAfterFinish('None')">🖥️ 跑完保持界面</button>
+        </div>
+        <p class="tip" style="margin:10px 0 0;">开启「自动退出」后任务全部跑完会自动退出游戏，下次进入从主界面开始，不再停在模拟宇宙界面。当前状态：<strong id="afterFinishVal">{{ ('跑完自动退出游戏' if afVal == 'Exit' else '跑完保持界面') }}</strong>，下次运行任务时生效。</p>
+      </div>
+
+      <div class="card">
+        <h2><span class="icon">📌</span> 基本信息</h2>
+        <div class="info-grid">
+          <div class="info-item"><div class="label">当前实例</div><div class="value">{{ instance_name() }}（{{ instance_container() }}）</div></div>
+          <div class="info-item"><div class="label">项目目录</div><div class="value" style="font-size:13px;">{{ instance_dir() }}</div></div>
+          <div class="info-item"><div class="label">容器名</div><div class="value">{{ instance_container() }}</div></div>
+          <div class="info-item"><div class="label">Config</div><div class="value" style="font-size:13px;">{{ ('✅ 存在' if is_file(instance_config()) else '❌ 不存在') }}</div></div>
+          <div class="info-item"><div class="label">最近日志</div><div class="value" style="font-size:13px;">{{ latest_log_name }}</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2><span class="icon">🔗</span> 管理面板更新 <button class="btn small gray" onclick="testUpdateSource()" style="margin-left:auto;">测试连接</button></h2>
+        <div class="info-grid">
+          <div class="info-item"><div class="label">更新源类型</div><div class="value">{{ strtoupper(UPDATE_TYPE) }}</div></div>
+          <div class="info-item"><div class="label">当前版本</div><div class="value">v{{ PANEL_VERSION }} (Python)</div></div>
+          <div class="info-item"><div class="label">仓库</div><div class="value" style="font-size:13px;">{{ UPDATE_OWNER ~ '/' ~ UPDATE_REPO }}</div></div>
+          <div class="info-item"><div class="label">更新模式</div><div class="value"><select id="panelUpdateMode" onchange="setUpdateMode(this.value)" style="font-size:13px;"><option value="auto"{{ (' selected' if panel_update_mode() == 'auto' else '') }}>自动检查</option><option value="manual"{{ (' selected' if panel_update_mode() == 'manual' else '') }}>手动更新</option></select></div></div>
+          <div class="info-item"><div class="label">检查更新</div><div class="value"><button class="btn small primary" onclick="checkUpdate(true)">立即检查</button></div></div>
+          <div class="info-item"><div class="label">API 连通</div><div class="value" id="srcApiStatus">未测试</div></div>
+          <div class="info-item"><div class="label">文件下载</div><div class="value" id="srcRawStatus">未测试</div></div>
+          <div class="info-item"><div class="label">镜像加速</div><div class="value" id="srcMirrorStatus">未测试</div></div>
+        </div>
+        <p class="tip" style="margin:10px 0 0;">自动检查：页面加载时自动检测面板新版本并弹提示，可忽略该版本；手动更新：不自动提示，点「立即检查」查看。</p>
+      </div>
+
+      <div class="card">
+        {% set bkList = backups_list() %}
+        <h2><span class="icon">🗂️</span> 版本备份 / 回滚
+          <span class="badge" style="background:var(--primary-soft);color:var(--primary);">保留最近 {{ (BACKUP_KEEP)|int }} 份</span>
+        </h2>
+        {% if  not bkList %}
+        <p class="tip" style="margin:0;">暂无备份。面板「一键更新」覆盖 index.php 前会自动把当前版本备份到 <code>backups/</code> 目录，更新出问题时可从这里一键回滚。</p>
+        {% else %}
+        <div class="hist-table-wrap">
+          <table class="hist-table">
+            <thead><tr><th>版本</th><th>备份时间</th><th>大小</th><th style="text-align:right;">操作</th></tr></thead>
+            <tbody>
+              {% for bk in bkList %}
+              <tr>
+                <td data-label="版本">v{{ bk['version'] }}</td>
+                <td data-label="备份时间">{{ bk['timeStr'] }}</td>
+                <td data-label="大小">{{ format_size(bk['size']) }}</td>
+                <td data-label="操作" style="text-align:right;"><button type="button" class="btn small orange" onclick="rollbackPanel('{{ bk['file'] }}')">↩️ 回滚</button></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
+        <p class="tip" style="margin:10px 0 0;">回滚会把面板 <code>index.php</code> 恢复为所选备份；回滚前会先把当前版本也备份一次（防手滑），回滚完成后请刷新页面确认版本号。</p>
+      </div>
+
+      <div class="card">
+        <h2><span class="icon">🐳</span> 三月七小助手镜像更新</h2>
+        <div class="info-grid">
+          <div class="info-item"><div class="label">小助手镜像</div><div class="value" id="imgStatus">检测中…</div></div>
+          <div class="info-item"><div class="label">镜像检查</div><div class="value"><button class="btn small gray" onclick="checkImage(true)">重新检查</button></div></div>
+          <div class="info-item"><div class="label">镜像更新</div><div class="value"><button class="btn small orange" onclick="updateAssistantImage()">⬆️ 更新镜像</button></div></div>
+        </div>
+        <p class="tip" style="margin:10px 0 0;">对比本地镜像构建时间与 GitHub 最新提交，超过 1 小时提示更新；结果缓存 6 小时。更新镜像会自动依次尝试官方源与国内加速镜像（南大 / DaoCloud / dockerproxy），拉取成功后重建容器。</p>
+      </div>
+
+      <div class="card">
+        <h2><span class="icon">💾</span> 配置备份</h2>
+        <div class="btn-group">
+          <a href="?download=config" class="btn primary">⬇️ 下载备份</a>
+        </div>
+        <form method="post" enctype="multipart/form-data" style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          {{ csrf_field() }}
+          <input type="hidden" name="action" value="restore_config">
+          <input type="file" name="cfg_file" accept=".yaml,.yml" style="flex:1;font-size:13px;min-width:200px;">
+          <button type="submit" class="btn orange small" onclick="return confirm('恢复配置会用上传文件覆盖当前 config.yaml，确定？');">⬆️ 恢复配置</button>
+        </form>
+        <p class="tip" style="margin:10px 0 0;">下载备份可把配置导出到本地保存；恢复前会自动备份当前文件，恢复后需重启容器生效。</p>
+      </div>
+    </div>
+
+    <!-- ===== 任务 ===== -->
+    <div class="page" id="panel-tasks">
+      <div class="page-head">
+        <div class="page-title"><span class="pt-icon">🚀</span>任务</div>
+        <div class="page-desc">在容器内后台执行，启动后可切到「日志」页查看进度</div>
+      </div>
+
+      <div class="card">
+        <h2><span class="icon">🎮</span> 执行任务</h2>
+        <div class="task-grid">
+          {% for key, t in TASKS.items() %}
+          <div class="task-card">
+            <div class="icon">{{ t['icon'] }}</div>
+            <div class="label">{{ t['label'] }}</div>
+            <div class="desc">{{ t['desc'] }}</div>
+            <form method="post">{{ csrf_field() }}<input type="hidden" name="action" value="{{ key }}"><button type="submit" class="btn primary small">执行</button></form>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="card">
+        
+        <h2><span class="icon">🕒</span> 任务历史
+          <span class="badge" id="histStat" style="background:var(--primary-soft);color:var(--primary);">今日执行 {{ (histToday['count'])|int }} 次 · 成功 {{ (histToday['ok'])|int }} 次</span>
+          <button class="btn small gray" style="margin-left:auto;" onclick="clearHistory()">🗑️ 清空历史</button>
+        </h2>
+        <div class="hist-week" id="histWeek"></div>
+        <div class="hist-table-wrap">
+          <table class="hist-table">
+            <thead><tr><th>任务</th><th>开始时间</th><th>耗时</th><th>状态</th><th style="text-align:right;">操作</th></tr></thead>
+            <tbody id="histBody">
+              {% if  not histItems %}
+              <tr><td colspan="5" class="hist-empty">暂无任务执行记录，点击上方任务按钮即可开始记录</td></tr>
+              {% else %}{% for hi in histItems %}
+              <tr>
+                <td data-label="任务">{{ hi['task_label'] }}</td>
+                <td data-label="开始时间">{{ hi['start_str'] }}</td>
+                <td data-label="耗时">{{ hi['duration_str'] }}</td>
+                <td data-label="状态"><span class="hist-badge" style="background:{{ hi['status_color'] }};">{{ hi['status_label'] }}</span></td>
+                <td data-label="操作" style="text-align:right;"><button type="button" class="btn small gray" onclick="histViewLog()">📝 查看日志</button></td>
+              </tr>
+              {% endfor %}{% endif %}
+            </tbody>
+          </table>
+        </div>
+        <p class="tip" style="margin:10px 0 0;">面板记录每次任务的开始时间与耗时；小助手日志里没有明确的结束标记，运行中的任务以「日志静默超过 {{ (HISTORY_IDLE_SECONDS)|int }} 秒」判定结束、以「容器未运行且日志长时间无更新」判定中断。最多保留最近 {{ (HISTORY_KEEP)|int }} 条，按实例分别保存在 <code>data/history_容器名.json</code>。</p>
+      </div>
+
+      <!-- v1.15+：计划任务（由宿主机 cron 每分钟调用面板触发，不依赖程序常驻） -->
+      <div class="card">
+        
+        <h2><span class="icon">⏰</span> 计划任务
+          <span class="badge" style="background:var(--primary-soft);color:var(--primary);">共 {{ count(schedData['tasks']) }} 条 · 启用 {{ schedEnabled }} 条</span>
+          <form method="post" style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;">
+            {{ csrf_field() }}
+            <input type="hidden" name="action" value="schedule_conflict">
+            <span style="font-size:12px;color:var(--muted);">有任务在跑时</span>
+            <select name="conflict" class="cfg-select" style="min-width:170px;font-size:12px;" onchange="this.form.submit()">
+              <option value="skip"{{ (' selected' if schedData['conflict'] == 'skip' else '') }}>跳过本次</option>
+              <option value="stop"{{ (' selected' if schedData['conflict'] == 'stop' else '') }}>停掉当前任务再跑</option>
+            </select>
+          </form>
+        </h2>
+
+        <div class="hist-table-wrap">
+          <table class="hist-table sched-table">
+            <thead><tr><th>名称</th><th>时间</th><th>星期</th><th>任务</th><th>状态</th><th>上次结果</th><th style="text-align:right;">操作</th></tr></thead>
+            <tbody>
+              {% if  not schedData['tasks'] %}
+              <tr><td colspan="7" class="hist-empty">还没有计划任务，填写下面的表单即可添加（例如每天 04:00 跑一次「每日实训」）</td></tr>
+              {% else %}{% for st in schedData['tasks'] %}{% set stLabel = st['_label'] %}{% set stDays = st['_days'] %}{% set stDayText = st['_daytext'] %}
+              <tr>
+                <td data-label="名称">{{ (st['name'] if st['name'] != '' else st['id']) }}</td>
+                <td data-label="时间">{{ st['time'] }}</td>
+                <td data-label="星期">{{ stDayText }}</td>
+                <td data-label="任务">{{ stLabel }}</td>
+                <td data-label="状态">
+                  {% if  not empty(st['enabled']) %}
+                  <span class="hist-badge" style="background:var(--green);">已启用</span>
+                  {% else %}
+                  <span class="hist-badge" style="background:#94a3b8;">已停用</span>
+                  {% endif %}
+                </td>
+                <td data-label="上次结果" class="sched-result">{{ (st['last_result'] if st['last_result'] != '' else '--') }}</td>
+                <td data-label="操作" style="text-align:right;">
+                  <form method="post" style="display:inline-flex;gap:6px;">
+                    {{ csrf_field() }}
+                    <input type="hidden" name="sched_id" value="{{ st['id'] }}">
+                    <button type="submit" class="btn small {{ ('gray' if not empty(st['enabled']) else 'green') }}" name="action" value="schedule_toggle">{{ ('⏸ 停用' if not empty(st['enabled']) else '▶ 启用') }}</button>
+                    <button type="submit" class="btn small red" name="action" value="schedule_del" onclick="return confirm('删除计划任务「{{ (st['name'] if st['name'] != '' else st['id']) }}」？');">🗑 删除</button>
+                  </form>
+                </td>
+              </tr>
+              {% endfor %}{% endif %}
+            </tbody>
+          </table>
+        </div>
+
+        <form method="post" class="sched-form">
+          {{ csrf_field() }}
+          <div class="sched-form-row">
+            <label>名称</label>
+            <input type="text" name="sched_name" maxlength="40" placeholder="如 每日全量" required>
+          </div>
+          <div class="sched-form-row">
+            <label>时间</label>
+            <input type="time" name="sched_time" value="04:00" required>
+            <span class="sched-hint">24 小时制；以服务器时区为准</span>
+          </div>
+          <div class="sched-form-row">
+            <label>星期</label>
+            <div class="sched-days">
+              {% for dn, dc in _schedDayName.items() %}
+              <label class="sched-day"><input type="checkbox" name="sched_days[]" value="{{ (dn)|int }}"><span>周{{ dc }}</span></label>
+              {% endfor %}
+              <span class="sched-hint">都不勾选 = 每天执行</span>
+            </div>
+          </div>
+          <div class="sched-form-row">
+            <label>任务</label>
+            <select name="sched_args" class="cfg-select">
+              {% for key, t in TASKS.items() %}
+              <option value="{{ key }}">{{ t['icon'] ~ ' ' ~ t['label'] }}</option>
+              {% endfor %}
+            </select>
+            <button type="submit" class="btn primary small" name="action" value="schedule_add">➕ 添加计划任务</button>
+            <button type="submit" class="btn orange small" name="action" value="schedule_now" formnovalidate>▶️ 立即运行一次</button>
+          </div>
+        </form>
+
+        <p class="tip" style="margin:12px 0 0;">原理：宿主机（宝塔 → 计划任务 → 添加 Shell 脚本）<b>每分钟</b>调用一次下面的命令，面板自己判断是否到了设定的时间点并启动任务，所以<b>不依赖小助手常驻</b>。到点后 30 分钟内仍会补跑（避免 cron 间隔或服务器卡顿导致漏跑）；同一时间点只触发一次，重复调用不会重复开任务。
+          {% if _schedBuiltin > 0 %}
+          <br>检测到 config.yaml 里本体自带的 <code>scheduled_tasks</code> 有 <b>{{ (_schedBuiltin)|int }} 条</b>：那套定时任务只在程序常驻运行时生效，Docker 按需起容器的场景建议改用这里的计划任务，避免两处重复触发。
+          {% endif %}
+        </p>
+        <div class="sched-cmd-row">
+          <code id="schedCronCmd" class="sched-cmd">{{ _schedCron }}</code>
+          <button type="button" class="btn small gray" onclick="copyText('schedCronCmd', this)">📋 复制</button>
+        </div>
+        <p class="tip" style="margin:8px 0 0;"><span style="color:var(--muted);font-size:12px;">提示：命令里的地址会自动取你当前访问面板的地址；如果服务器实际 IP 与此不同（例如用域名访问、内网/外网 IP 不一致），请把命令里的地址改成实际能访问面板的地址。命令带 key 校验，没有 key 的请求会被直接拒绝，建议面板本身也放在内网或加访问密码保护。</span></p>
+      </div>
+
+      <div class="card">
+        <h2><span class="icon">🔧</span> 容器操作</h2>
+        <div class="btn-group">
+          {% for key, op in OPS.items() %}
+          <form method="post" style="display:inline;" onsubmit="return confirm('{{ op['confirm'] }}');">{{ csrf_field() }}<input type="hidden" name="action" value="{{ key }}"><button type="submit" class="btn {{ (op['color'] | default('primary', true)) }}">{{ op['icon'] ~ ' ' ~ op['label'] }}</button></form>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 配置 ===== -->
+    <div class="page" id="panel-config">
+      <div class="page-head">
+        <div class="page-title"><span class="pt-icon">⚙️</span>配置</div>
+        <div class="page-desc">图形化或文本方式编辑 config.yaml</div>
+      </div>
+
+      <div class="card">
+        <h2><span class="icon">⚙️</span> 配置管理</h2>
+
+        <div class="cfg-tabs">
+          <button class="cfg-tab active" onclick="switchCfgTab('form')">📋 图形化编辑</button>
+          <button class="cfg-tab" onclick="switchCfgTab('text')">📝 文本编辑</button>
+        </div>
+
+        <!-- 图形化表单 -->
+        <div class="cfg-panel active" id="cfgPanel-form">
+          <form method="post" id="configForm">
+            {{ csrf_field() }}
+            <input type="hidden" name="action" value="save_config_form">
+
+            {% for gKey, g in CONFIG_GROUPS.items() %}{% set gCollapsed = g.get('collapsed', False) %}{% if gKey == 'notify' and notifyCheck is not none %}{{ notify_check_html(notifyCheck) }}{% endif %}
+            <div class="cfg-group{{ (' collapsed' if gCollapsed else '') }}" id="cfgGroup-{{ gKey }}">
+              {% if gCollapsed %}
+              <h3 class="cfg-toggle" onclick="toggleCfgGroup('{{ gKey }}')">
+                <span class="cfg-caret">▾</span>
+                {{ g['icon'] ~ ' ' ~ g['title'] }}
+                <span class="cfg-hint"></span>
+              </h3>
+              {% else %}
+              <h3>{{ g['icon'] ~ ' ' ~ g['title'] }}</h3>
+              {% endif %}
+              {% if  not empty(g['note']) %}
+              <p class="cfg-note">{{ g['note'] }}</p>
+              {% endif %}
+              <div class="cfg-body">
+              {% for fKey, f in g['fields'].items() %}{% set curVal = cfgVals.get(fKey, '') %}{% set curValClean = trim(curVal, '"\'') %}
+              <div class="cfg-row">
+                <span class="cfg-label">{{ f['label'] }}{% if  not empty(f['tip']) %}<span class="cfg-tip">{{ f['tip'] }}</span>{% endif %}</span>
+                <div class="cfg-input">
+                  {% if f['type'] == 'bool' %}
+                  <label class="switch">
+                    <input type="checkbox" name="cfg_{{ fKey }}" value="1" {{ ('checked' if (curVal == 'true') else '') }}>
+                    <span class="slider"></span>
+                  </label>
+
+                  {% elif f['type'] == 'select' %}
+                  <select name="cfg_{{ fKey }}" class="cfg-select">
+                    {% for ov, ol in f['options'].items() %}
+                    <option value="{{ ov }}" {{ ('selected' if (curValClean == ov) else '') }}>{{ ol }}</option>
+                    {% endfor %}
+                  </select>
+
+                  {% elif f['type'] == 'int' %}
+                  <input type="number" name="cfg_{{ fKey }}" value="{{ curValClean }}" class="cfg-input-num">
+
+                  {% elif f['type'] == 'password' %}
+                  <input type="password" name="cfg_{{ fKey }}" placeholder="留空则不修改" class="cfg-input-text cfg-pass" autocomplete="off">
+
+                  {% elif f['type'] == 'textarea' %}
+                  <textarea name="cfg_{{ fKey }}" class="cfg-textarea" rows="3" placeholder="{{ (f['placeholder'] | default('', true)) }}">{{ curValClean }}</textarea>
+
+                  {% else %}
+                  <input type="text" name="cfg_{{ fKey }}" value="{{ curValClean }}" class="cfg-input-text" placeholder="{{ (f['placeholder'] | default('', true)) }}">
+                  {% endif %}
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+            </div>
+            {% endfor %}
+
+            <div class="btn-group" style="margin-top:16px;">
+              <button type="submit" class="btn green">💾 保存配置</button>
+              <button type="button" class="btn orange" onclick="restartAfterSave()">💾 保存并重启容器</button>
+              <button type="submit" class="btn blue" name="then_notify_test" value="1">🔔 保存并发送测试推送</button>
+              <button type="submit" class="btn green" name="then_notify_check" value="1">🔍 保存并体检</button>
+            </div>
+            <p class="cfg-footnote">提示：「🔔 保存并发送测试推送」会先保存本页配置，再向小助手发一条测试通知，用于验证推送渠道是否配通（结果看任务历史或日志）。「🔍 保存并体检」同样先保存本页配置，然后只做只读检查：告诉你哪些渠道真正会发出去、哪些启用了却缺必填项，结果直接显示在「消息推送」分组上方（不会发送任何消息）。</p>
+          </form>
+        </div>
+
+        <!-- 文本编辑 -->
+        <div class="cfg-panel" id="cfgPanel-text">
+          <form method="post" id="configTextForm">
+            {{ csrf_field() }}
+            <input type="hidden" name="action" value="save_config_text">
+            <p class="tip" style="margin-bottom:10px;">直接编辑完整 YAML，保存前会自动备份。修改后需重启容器生效。</p>
+            <textarea name="yaml_content" class="yaml-editor" id="yamlEditor" spellcheck="false">{{ raw_cfg if raw_cfg is not none else '' }}</textarea>
+            <div class="btn-group" style="margin-top:12px;">
+              <button type="submit" class="btn green">💾 保存</button>
+              <button type="button" class="btn" style="background:#94a3b8;" onclick="reloadYaml()">🔄 重新加载</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="tip" style="margin-top:16px;">
+          ⚠️ 保存配置后需<span style="font-weight:600;">重启容器</span>才生效。
+          如遇写入权限错误，请执行：<code>chmod 666 {{ instance_config() }}</code>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 日志 ===== -->
+    <div class="page" id="panel-log">
+      <div class="page-head">
+        <div class="page-title"><span class="pt-icon">📝</span>日志</div>
+        <div class="page-desc">关键词搜索 · 级别/时间过滤 · 一键导出</div>
+      </div>
+
+      <div class="card">
+        <div class="log-header">
+          <h2 style="margin-bottom:0;"><span class="icon">📝</span> 运行日志</h2>
+          <div class="auto-refresh">
+            <label><input type="checkbox" id="autoRefresh" checked onchange="toggleAutoRefresh()"> 自动刷新</label>
+            <select id="refreshInterval" onchange="updateRefreshInterval()" style="padding:4px 8px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:var(--card-solid);color:var(--text);">
+              <option value="3000">3 秒</option>
+              <option value="5000" selected>5 秒</option>
+              <option value="10000">10 秒</option>
+              <option value="30000">30 秒</option>
+            </select>
+            <button class="btn small gray" onclick="refreshLog()">立即刷新</button>
+          </div>
+        </div>
+        <div class="log-filter">
+          <input type="text" id="logKeyword" placeholder="🔍 搜索关键词（回车立即过滤）" onkeyup="logKeywordKeyup(event)">
+          <select id="logLevel" onchange="refreshLog()">
+            <option value="">全部级别</option>
+            <option value="DEBUG">DEBUG</option>
+            <option value="INFO">INFO</option>
+            <option value="WARNING">WARNING</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+          <select id="logHours" onchange="refreshLog()">
+            <option value="0">全部时间</option>
+            <option value="1">最近 1 小时</option>
+            <option value="6">最近 6 小时</option>
+            <option value="24">最近 24 小时</option>
+          </select>
+          <select id="logFile" onchange="refreshLog()"><option value="">加载中…</option></select>
+          <button class="btn small primary" id="exportLogBtn">⬇ 导出</button>
+          <button class="btn small gray" onclick="resetLogFilter()">↻ 重置</button>
+        </div>
+        <div class="log-count" id="logCount" style="margin-bottom:8px;"></div>
+        <div class="log-tools">
+          <label><input type="checkbox" id="logFollow" checked> 自动跟随</label>
+          <button type="button" onclick="logJumpBottom()">⤓ 到底</button>
+          <button type="button" onclick="copyLogText()">📋 复制</button>
+        </div>
+        <div class="codebox" id="logBox" style="max-height:600px;"><div style="color:var(--muted);">日志加载中…</div></div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /layout -->
+
+<!-- ===== 实例管理弹窗 ===== -->
+<div class="modal-overlay" id="instModal" style="display:none;" onclick="if(event.target===this)closeInstModal()">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title">📦 实例管理</div>
+      <button type="button" class="icon-btn" onclick="closeInstModal()" style="font-size:18px;">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="tip" style="margin-bottom:12px;">每个实例对应一个已部署的三月七小助手 Docker 容器。切换实例后，任务、配置、日志、备份均作用于当前实例。</div>
+
+      <div class="inst-list">
+        {% for it in instances_load() %}{% set cur = instance_current() %}
+        <div class="inst-item">
+          <div class="inst-info">
+            <div class="inst-name">{{ it['name'] }} {{ ('<span class="badge-default">默认</span>' if not empty(it['default']) else '') }} {{ ('<span class="badge-cur">当前</span>' if it['id'] == cur['id'] else '') }}</div>
+            <div class="inst-meta">容器：{{ it['container'] }} · 目录：{{ it['dir'] }}</div>
+          </div>
+          <div class="inst-actions">
+            <button type="button" class="btn small gray" onclick="editInst({{ json_encode(it, JSON_UNESCAPED_UNICODE) }})">编辑</button>
+            <button type="button" class="btn small red" onclick="askDeleteInst({{ json_encode(it, JSON_UNESCAPED_UNICODE) }})">删除</button>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      <!-- 新增/编辑表单 -->
+      <div class="inst-form-wrap" id="instFormWrap" style="display:none;">
+        <form method="post" class="inst-form">
+          {{ csrf_field() }}
+          <input type="hidden" name="action" value="instance_save">
+          <input type="hidden" name="inst_id" id="inst_id" value="">
+          <div class="inst-form-row"><label>名称</label><input type="text" name="inst_name" id="inst_name" class="cfg-input-text" placeholder="如：主号 / 小号"></div>
+          <div class="inst-form-row"><label>容器名</label><input type="text" name="inst_container" id="inst_container" class="cfg-input-text" placeholder="如：m7a（docker ps 里的 NAME）"></div>
+          <div class="inst-form-row"><label>项目目录</label><input type="text" name="inst_dir" id="inst_dir" class="cfg-input-text" placeholder="如：/home/march7thassistant"></div>
+          <div class="inst-form-row"><label><input type="checkbox" name="inst_default" id="inst_default" value="1"> 设为默认实例</label></div>
+          <div class="btn-group">
+            <button type="submit" class="btn green">💾 保存实例</button>
+            <button type="button" class="btn gray" onclick="hideInstForm()">取消</button>
+          </div>
+        </form>
+      </div>
+
+      <button type="button" class="btn primary small" onclick="newInst()" style="margin-top:12px;">➕ 新增实例</button>
+    </div>
+  </div>
+</div>
+
+<!-- v1.17：移动端胶囊悬浮导航 + 中央快捷键（≤640 显示） -->
+<nav class="mobile-tabbar" aria-label="页面导航">
+  <button type="button" class="tab-item active" data-tab="overview" onclick="switchTab('overview')"><span class="tab-icon">📊</span><span class="tab-text">概览</span></button>
+  <button type="button" class="tab-item" data-tab="tasks" onclick="switchTab('tasks')"><span class="tab-icon">🚀</span><span class="tab-text">任务</span></button>
+  <div class="tab-fab-slot">
+    <button type="button" class="tab-fab" id="tabFab" aria-label="容器快捷启停" title="状态检测中…"
+      onclick="fabTap()" ontouchstart="fabLongPressStart()" ontouchend="fabLongPressCancel()"
+      ontouchmove="fabLongPressCancel()" onmousedown="fabLongPressStart()" onmouseup="fabLongPressCancel()"
+      onmouseleave="fabLongPressCancel()" oncontextmenu="return false;"><span id="fabIcon">⏳</span></button>
+  </div>
+  <button type="button" class="tab-item" data-tab="log" onclick="switchTab('log')"><span class="tab-icon">📝</span><span class="tab-text">日志</span></button>
+  <button type="button" class="tab-item" data-tab="config" onclick="switchTab('config')"><span class="tab-icon">⚙️</span><span class="tab-text">配置</span></button>
+</nav>
+<button type="button" class="backtop" id="backTop" onclick="backToTop()" aria-label="回到顶部">⬆️</button>
+<!-- v1.18：运行中任务悬浮条 -->
+<div class="runbar" id="runBar">
+  <span class="rb-dot"></span>
+  <span class="rb-label" id="rbLabel">运行中</span>
+  <span class="rb-time" id="rbTime">00:00</span>
+  <span class="rb-acts">
+    <button type="button" class="rb-btn" onclick="switchTab('log')">📝 日志</button>
+    <button type="button" class="rb-btn rb-stop" onclick="runbarStop()">⏹ 停止</button>
+  </span>
+</div>
+<div class="sheet-overlay" id="fabSheetOverlay" onclick="closeFabSheet()">
+  <div class="sheet" role="menu" onclick="event.stopPropagation()">
+    <div class="sheet-title">容器快捷操作</div>
+    <button type="button" class="sheet-item" onclick="fabAct('restart')">🔄 重启容器<span class="sheet-sub">docker compose restart，恢复运行 / 应用新配置</span></button>
+    <button type="button" class="sheet-item" onclick="fabAct('stop')">⏸️ 停止容器<span class="sheet-sub">任务将全部中断，之后可点中央按钮恢复</span></button>
+    <button type="button" class="sheet-item" onclick="closeFabSheet();doUpdate();">⬆️ 更新镜像<span class="sheet-sub">拉取小助手最新版并重建容器</span></button>
+    <button type="button" class="sheet-cancel" onclick="closeFabSheet()">取消</button>
+  </div>
+</div>
+<!-- v1.18：点按中央键 → 快速跑任务菜单 -->
+<div class="sheet-overlay" id="taskSheetOverlay" onclick="closeTaskSheet()">
+  <div class="sheet" role="menu" onclick="event.stopPropagation()">
+    <div class="sheet-title">🚀 快速跑任务</div>
+    {% for key, t in TASKS.items() %}
+    <button type="button" class="sheet-item" onclick="quickTask('{{ key }}', '{{ t['label'] }}')">{{ t['icon'] ~ ' ' ~ t['label'] }}<span class="sheet-sub">{{ t['desc'] }}</span></button>
+    {% endfor %}
+    <button type="button" class="sheet-cancel" onclick="closeTaskSheet()">取消</button>
+  </div>
+</div>
+<!-- v1.18：全局搜索 -->
+<div class="search-overlay" id="searchOverlay" onclick="closeSearch()">
+  <div class="search-panel" onclick="event.stopPropagation()">
+    <div class="search-bar"><span style="opacity:.7;">🔍</span><input type="text" id="searchInput" placeholder="搜任务 / 配置项 / 页面 / 操作，回车跳转，Esc 关闭" autocomplete="off"></div>
+    <div class="search-results" id="searchResults"></div>
+  </div>
+</div>
+{% endif %}
+
+<script>window.TASK_LIST = {{ json_encode(TASKS) | safe }};window.PANEL_UPDATE_MODE = {{ json_encode(panel_update_mode()) | safe }};</script>
+<script src="/static/panel.js"></script>
+</body>
+</html>

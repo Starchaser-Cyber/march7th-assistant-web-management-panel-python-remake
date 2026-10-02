@@ -1,0 +1,1179 @@
+{
+ "config_groups": {
+  "basic": {
+   "title": "基础设置",
+   "icon": "⚙️",
+   "fields": {
+    "log_level": {
+     "label": "日志等级",
+     "type": "select",
+     "options": {
+      "INFO": "INFO（仅重要信息）",
+      "DEBUG": "DEBUG（详细调试）"
+     }
+    },
+    "log_retention_days": {
+     "label": "日志保留天数",
+     "type": "int"
+    },
+    "check_update": {
+     "label": "检查更新",
+     "type": "bool"
+    },
+    "pause_after_success": {
+     "label": "成功后暂停",
+     "type": "bool"
+    },
+    "exit_after_failure": {
+     "label": "失败后退出",
+     "type": "bool"
+    },
+    "after_finish": {
+     "label": "完成后操作",
+     "type": "select",
+     "options": {
+      "None": "无操作",
+      "Exit": "退出",
+      "Loop": "循环",
+      "Shutdown": "关机",
+      "Sleep": "睡眠",
+      "Hibernate": "休眠",
+      "Restart": "重启",
+      "Logoff": "注销",
+      "TurnOffDisplay": "关显示器",
+      "RunScript": "运行脚本"
+     }
+    },
+    "play_audio": {
+     "label": "完成后播放提示音",
+     "type": "bool"
+    },
+    "debug_mode_enable": {
+     "label": "调试模式",
+     "type": "bool"
+    }
+   }
+  },
+  "instance": {
+   "title": "副本与体力",
+   "icon": "⚔️",
+   "fields": {
+    "power_enable": {
+     "label": "清体力总开关",
+     "type": "bool"
+    },
+    "power_plan_keep": {
+     "label": "保留体力计划",
+     "type": "bool"
+    },
+    "instance_type": {
+     "label": "副本类型",
+     "type": "select",
+     "options": {
+      "拟造花萼（金）": "拟造花萼（金）",
+      "拟造花萼（赤）": "拟造花萼（赤）",
+      "凝滞虚影": "凝滞虚影",
+      "侵蚀隧洞": "侵蚀隧洞",
+      "饰品提取": "饰品提取"
+     }
+    },
+    "tp_before_instance": {
+     "label": "进副本前传送",
+     "type": "bool"
+    },
+    "build_target_enable": {
+     "label": "培养目标",
+     "type": "bool"
+    },
+    "break_down_level_four_relicset": {
+     "label": "分解四星遗器",
+     "type": "bool"
+    },
+    "use_reserved_trailblaze_power": {
+     "label": "使用后备开拓力",
+     "type": "bool"
+    },
+    "use_fuel": {
+     "label": "使用燃料",
+     "type": "bool"
+    },
+    "echo_of_war_enable": {
+     "label": "体力优先历战余响",
+     "type": "bool"
+    },
+    "merge_immersifier": {
+     "label": "优先合成沉浸器",
+     "type": "bool"
+    },
+    "borrow_enable": {
+     "label": "使用支援角色",
+     "type": "bool"
+    }
+   }
+  },
+  "daily": {
+   "title": "日常与奖励",
+   "icon": "🎁",
+   "fields": {
+    "daily_enable": {
+     "label": "日常任务",
+     "type": "bool"
+    },
+    "daily_material_enable": {
+     "label": "合成材料完成日常",
+     "type": "bool"
+    },
+    "daily_himeko_try_enable": {
+     "label": "姬子试用完成日常",
+     "type": "bool"
+    },
+    "reward_enable": {
+     "label": "领取奖励总开关",
+     "type": "bool"
+    },
+    "reward_dispatch_enable": {
+     "label": "领取委托奖励",
+     "type": "bool"
+    },
+    "reward_mail_enable": {
+     "label": "领取邮件奖励",
+     "type": "bool"
+    },
+    "reward_assist_enable": {
+     "label": "领取支援奖励",
+     "type": "bool"
+    },
+    "reward_quest_enable": {
+     "label": "领取每日实训",
+     "type": "bool"
+    },
+    "reward_srpass_enable": {
+     "label": "领取无名勋礼",
+     "type": "bool"
+    },
+    "reward_redemption_code_enable": {
+     "label": "领取兑换码",
+     "type": "bool"
+    },
+    "reward_achievement_enable": {
+     "label": "领取成就奖励",
+     "type": "bool"
+    }
+   }
+  },
+  "activity": {
+   "title": "活动设置",
+   "icon": "🎪",
+   "fields": {
+    "activity_enable": {
+     "label": "活动功能",
+     "type": "bool"
+    },
+    "activity_dailycheckin_enable": {
+     "label": "每日签到",
+     "type": "bool"
+    },
+    "activity_gardenofplenty_enable": {
+     "label": "花藏繁生",
+     "type": "bool"
+    },
+    "activity_realmofthestrange_enable": {
+     "label": "异器盈界",
+     "type": "bool"
+    },
+    "activity_planarfissure_enable": {
+     "label": "位面分裂",
+     "type": "bool"
+    },
+    "activity_journey_highlights_notification_enable": {
+     "label": "活动热点通知",
+     "type": "bool"
+    },
+    "currencywars_enable": {
+     "label": "货币战争",
+     "type": "bool",
+     "tip": "启用后按所选模式自动完成积分奖励"
+    },
+    "currencywars_type": {
+     "label": "货币战争模式",
+     "type": "select",
+     "options": {
+      "normal": "标准博弈（提升职级）",
+      "overclock": "超频博弈（快速刷积分）"
+     },
+     "tip": "标准博弈收益更高；超频博弈时间更短"
+    },
+    "currencywars_bonus_enable": {
+     "label": "积分后自动提取饰品",
+     "type": "bool",
+     "tip": "领取积分奖励后自动消耗深度沉浸器快速提取位面饰品，可能提升运行速度"
+    }
+   }
+  },
+  "schedule": {
+   "title": "定时与循环",
+   "icon": "⏰",
+   "fields": {
+    "loop_mode": {
+     "label": "循环模式",
+     "type": "select",
+     "options": {
+      "scheduled": "定时任务",
+      "power": "根据开拓力"
+     }
+    },
+    "scheduled_time": {
+     "label": "运行时间",
+     "type": "str",
+     "placeholder": "如 8:00 或 04:00"
+    },
+    "power_limit": {
+     "label": "开拓力下限",
+     "type": "int"
+    },
+    "refresh_hour": {
+     "label": "游戏刷新时间（时）",
+     "type": "int"
+    },
+    "scheduled_on_conflict": {
+     "label": "任务冲突处理",
+     "type": "select",
+     "options": {
+      "skip": "跳过",
+      "stop": "停止当前再启动"
+     }
+    },
+    "scheduled_chain_continue_on_failure": {
+     "label": "链式任务失败后继续",
+     "type": "bool"
+    }
+   }
+  },
+  "notify": {
+   "title": "消息推送 · 通用",
+   "icon": "🔔",
+   "note": "小助手的推送渠道都集中在这一段（v1.15 起），常用渠道任选一个填好即可；填完点表单最下方的「🔔 保存并发送测试推送」能立刻验证是否配通。修改后需重启容器生效。",
+   "fields": {
+    "notification_enable": {
+     "label": "通知总开关",
+     "type": "bool",
+     "tip": "关闭后所有渠道推送均失效；只想临时静音关这里即可"
+    },
+    "notify_level": {
+     "label": "通知级别",
+     "type": "select",
+     "options": {
+      "all": "全部通知",
+      "error": "仅错误"
+     },
+     "tip": "选「仅错误」时只有出错才推送，日常成功不打扰"
+    },
+    "notify_merge": {
+     "label": "合并通知",
+     "type": "bool",
+     "tip": "开启后完整运行结束只发一条汇总"
+    },
+    "notify_send_images": {
+     "label": "推送图片",
+     "type": "bool",
+     "tip": "推送消息时附带游戏截图（部分渠道不支持）"
+    }
+   }
+  },
+  "notify_serverchan": {
+   "title": "Server酱（微信）",
+   "icon": "🛎️",
+   "note": "微信推送最省事的方案：填一个 SendKey 就能用。修改后需重启容器生效。",
+   "fields": {
+    "notify_serverchanturbo_enable": {
+     "label": "启用 Server酱·Turbo",
+     "type": "bool",
+     "tip": "免费版每天 5 条，注册地址 sct.ftqq.com"
+    },
+    "notify_serverchanturbo_sctkey": {
+     "label": "SendKey（Turbo）",
+     "type": "password",
+     "placeholder": "SCT 开头的密钥",
+     "tip": "登录 sct.ftqq.com，首页即可复制"
+    },
+    "notify_serverchanturbo_channel": {
+     "label": "推送渠道",
+     "type": "str",
+     "placeholder": "可选",
+     "tip": "留空使用默认渠道（微信服务号）"
+    },
+    "notify_serverchanturbo_openid": {
+     "label": "OpenID",
+     "type": "str",
+     "placeholder": "可选",
+     "tip": "指定接收人的 OpenID，留空发给本人"
+    },
+    "notify_serverchan3_enable": {
+     "label": "启用 Server酱·3",
+     "type": "bool",
+     "tip": "走 APP 推送，注册地址 sc3.ft07.com"
+    },
+    "notify_serverchan3_sendkey": {
+     "label": "SendKey（3）",
+     "type": "password",
+     "placeholder": "sctp 开头的密钥",
+     "tip": "Turbo 与 3 是两个服务，密钥不通用，按需只填一个"
+    }
+   }
+  },
+  "notify_bark": {
+   "title": "Bark（iOS）",
+   "icon": "🐶",
+   "fields": {
+    "notify_bark_enable": {
+     "label": "启用 Bark",
+     "type": "bool",
+     "tip": "iOS 用户推荐，App Store 搜 Bark 安装，支持推送截图"
+    },
+    "notify_bark_key": {
+     "label": "推送 Key",
+     "type": "password",
+     "placeholder": "只填 Key，不要带 https://api.day.app/",
+     "tip": "Bark App 首页地址里最后一段就是 Key"
+    },
+    "notify_bark_base_url": {
+     "label": "自定义服务 URL",
+     "type": "str",
+     "placeholder": "如 https://api.day.app",
+     "tip": "只有自建 Bark 服务才填，官方服务留空"
+    },
+    "notify_bark_group": {
+     "label": "分组名",
+     "type": "str",
+     "placeholder": "可选",
+     "tip": "Bark 里的消息分组，便于归类"
+    },
+    "notify_bark_icon": {
+     "label": "图标 URL",
+     "type": "str",
+     "placeholder": "可选",
+     "tip": "消息左侧显示的小图标"
+    },
+    "notify_bark_sound": {
+     "label": "提示音",
+     "type": "str",
+     "placeholder": "可选",
+     "tip": "如 birdsong、alarm，留空用默认"
+    },
+    "notify_bark_isarchive": {
+     "label": "是否归档",
+     "type": "str",
+     "placeholder": "可选，1 或 0",
+     "tip": "填 1 表示消息存进 Bark 历史记录"
+    },
+    "notify_bark_url": {
+     "label": "点击跳转 URL",
+     "type": "str",
+     "placeholder": "可选",
+     "tip": "点通知后打开的网页地址"
+    },
+    "notify_bark_copy": {
+     "label": "复制文本",
+     "type": "str",
+     "placeholder": "可选",
+     "tip": "通知里附带一段可长按复制的文本"
+    },
+    "notify_bark_autocopy": {
+     "label": "自动复制",
+     "type": "str",
+     "placeholder": "可选",
+     "tip": "填 1 表示收到通知自动复制上面那段文本"
+    },
+    "notify_bark_cipherkey": {
+     "label": "加密密钥",
+     "type": "password",
+     "placeholder": "需与 App 内一致",
+     "tip": "自建加密服务才填"
+    },
+    "notify_bark_ciphermethod": {
+     "label": "加密算法",
+     "type": "str",
+     "placeholder": "cbc 或 ecb",
+     "tip": "与上方的加密密钥配套使用"
+    }
+   }
+  },
+  "notify_dingtalk": {
+   "title": "钉钉机器人",
+   "icon": "📌",
+   "fields": {
+    "notify_dingtalk_enable": {
+     "label": "启用钉钉",
+     "type": "bool",
+     "tip": "群里加「自定义机器人」后把凭据填到这里"
+    },
+    "notify_dingtalk_token": {
+     "label": "机器人 Access Token",
+     "type": "password",
+     "placeholder": "Webhook 里 access_token= 后面的部分",
+     "tip": "只填 token，不用填完整 Webhook 地址"
+    },
+    "notify_dingtalk_secret": {
+     "label": "加签密钥",
+     "type": "password",
+     "placeholder": "可选",
+     "tip": "机器人安全设置选了「加签」才需要填，选「自定义关键词」则留空"
+    }
+   }
+  },
+  "notify_pushplus": {
+   "title": "PushPlus",
+   "icon": "📮",
+   "fields": {
+    "notify_pushplus_enable": {
+     "label": "启用 PushPlus",
+     "type": "bool",
+     "tip": "微信推送，pushplus.plus 微信扫码登录后获取 Token"
+    },
+    "notify_pushplus_token": {
+     "label": "Token",
+     "type": "password",
+     "placeholder": "pushplus.plus 首页复制",
+     "tip": "免费版每日条数有限"
+    },
+    "notify_pushplus_channel": {
+     "label": "通知渠道",
+     "type": "str",
+     "placeholder": "可选，如 wechat / webhook",
+     "tip": "留空使用默认渠道"
+    },
+    "notify_pushplus_webhook": {
+     "label": "Webhook URL",
+     "type": "str",
+     "placeholder": "可选",
+     "tip": "渠道选 webhook 时填接收地址"
+    },
+    "notify_pushplus_callbackUrl": {
+     "label": "回调 URL",
+     "type": "str",
+     "placeholder": "可选",
+     "tip": "推送后的回调地址，一般不需要"
+    }
+   }
+  },
+  "notify_wechat": {
+   "title": "企业微信",
+   "icon": "💼",
+   "fields": {
+    "notify_wechatworkbot_enable": {
+     "label": "启用机器人通知（简单）",
+     "type": "bool",
+     "tip": "群里加「群机器人」即可，配置最简单，推荐先用这个"
+    },
+    "notify_wechatworkbot_key": {
+     "label": "机器人 Key",
+     "type": "password",
+     "placeholder": "Webhook 里 key= 后面的部分",
+     "tip": "只填 key，不用填完整 Webhook 地址"
+    },
+    "notify_wechatworkbot_webhook_url": {
+     "label": "Webhook URL",
+     "type": "str",
+     "placeholder": "可选",
+     "tip": "自建中转时才填"
+    },
+    "notify_wechatworkapp_enable": {
+     "label": "启用应用通知（可发截图）",
+     "type": "bool",
+     "tip": "需要在企业微信后台自建应用，但支持推送截图"
+    },
+    "notify_wechatworkapp_corpid": {
+     "label": "企业 ID",
+     "type": "str",
+     "placeholder": "我的企业 → 企业信息里查看",
+     "tip": "以 ww 或 wx 开头"
+    },
+    "notify_wechatworkapp_corpsecret": {
+     "label": "应用密钥",
+     "type": "password",
+     "placeholder": "应用管理 → 你的应用 → Secret",
+     "tip": "应用级的 Secret，不是通讯录密钥"
+    },
+    "notify_wechatworkapp_agentid": {
+     "label": "AgentId",
+     "type": "str",
+     "placeholder": "应用详情页可看到（纯数字）",
+     "tip": "企业微信应用详情里的 AgentId"
+    },
+    "notify_wechatworkapp_touser": {
+     "label": "目标用户",
+     "type": "str",
+     "placeholder": "@all 或 成员账号",
+     "tip": "填 @all 发给全企业成员，也可填成员 UserID，多个用 | 分隔"
+    },
+    "notify_wechatworkapp_base_url": {
+     "label": "自定义 API 地址",
+     "type": "str",
+     "placeholder": "可选",
+     "tip": "默认走官方 API，一般留空"
+    }
+   }
+  },
+  "notify_lark": {
+   "title": "飞书",
+   "icon": "🪶",
+   "fields": {
+    "notify_lark_enable": {
+     "label": "启用飞书",
+     "type": "bool",
+     "tip": "群里加「自定义机器人」后把 Webhook 地址填到这里"
+    },
+    "notify_lark_webhook": {
+     "label": "Webhook 地址",
+     "type": "password",
+     "placeholder": "https://open.feishu.cn/open-apis/bot/v2/hook/xxxx",
+     "tip": "完整 Webhook 地址，飞书群设置 → 群机器人里复制"
+    },
+    "notify_lark_keyword": {
+     "label": "安全关键词",
+     "type": "str",
+     "placeholder": "无则留空",
+     "tip": "机器人安全设置选了「关键词」时必填，且消息内容需包含该关键词"
+    },
+    "notify_lark_sign": {
+     "label": "签名密钥",
+     "type": "password",
+     "placeholder": "可选",
+     "tip": "机器人安全设置选了「签名校验」时才填"
+    },
+    "notify_lark_content": {
+     "label": "消息内容",
+     "type": "str",
+     "placeholder": "可选",
+     "tip": "自定义消息模板，留空用默认内容"
+    },
+    "notify_lark_imageenable": {
+     "label": "图片消息",
+     "type": "bool",
+     "tip": "开启后可推送截图，需要自建飞书应用"
+    },
+    "notify_lark_appid": {
+     "label": "应用 AppID",
+     "type": "str",
+     "placeholder": "图片消息必填",
+     "tip": "飞书开放平台自建应用的 AppID"
+    },
+    "notify_lark_secret": {
+     "label": "应用 Secret",
+     "type": "password",
+     "placeholder": "图片消息必填",
+     "tip": "飞书开放平台自建应用的 App Secret"
+    }
+   }
+  },
+  "notify_telegram": {
+   "title": "Telegram",
+   "icon": "✈️",
+   "fields": {
+    "notify_telegram_enable": {
+     "label": "启用 Telegram",
+     "type": "bool",
+     "tip": "服务器需能访问 Telegram，国内服务器通常要配代理"
+    },
+    "notify_telegram_token": {
+     "label": "Bot Token",
+     "type": "password",
+     "placeholder": "BotFather 获取",
+     "tip": "在 Telegram 里找 @BotFather 创建机器人后复制 Token"
+    },
+    "notify_telegram_userid": {
+     "label": "接收用户/群组 ID",
+     "type": "str",
+     "placeholder": "如 123456789",
+     "tip": "私聊 ID 找 @userinfobot 获取；群组填 -100 开头的 ID"
+    },
+    "notify_telegram_api_url": {
+     "label": "自定义 API URL",
+     "type": "str",
+     "placeholder": "可选",
+     "tip": "只有自建反向代理/中转服务器才填"
+    },
+    "notify_telegram_proxies": {
+     "label": "代理地址",
+     "type": "str",
+     "placeholder": "如 127.0.0.1:10808",
+     "tip": "容器内可访问的代理地址，一般留空"
+    },
+    "notify_telegram_thread_id": {
+     "label": "Topics 线程 ID",
+     "type": "str",
+     "placeholder": "可选",
+     "tip": "群组开了话题（Topics）时才需要"
+    }
+   }
+  },
+  "notify_gotify": {
+   "title": "Gotify（自建）",
+   "icon": "🔧",
+   "fields": {
+    "notify_gotify_enable": {
+     "label": "启用 Gotify",
+     "type": "bool",
+     "tip": "自建推送服务，适合不想依赖第三方推送的用户"
+    },
+    "notify_gotify_url": {
+     "label": "服务器 URL",
+     "type": "str",
+     "placeholder": "如 http://1.2.3.4:8080",
+     "tip": "Gotify 服务地址，注意容器内能否访问"
+    },
+    "notify_gotify_token": {
+     "label": "Access Token",
+     "type": "password",
+     "placeholder": "Apps 里创建应用后生成",
+     "tip": "Gotify 后台 → Apps → 创建应用 → Token"
+    },
+    "notify_gotify_priority": {
+     "label": "优先级（1-10）",
+     "type": "int",
+     "tip": "数字越大通知越「重要」，默认 5"
+    }
+   }
+  },
+  "notify_discord": {
+   "title": "Discord",
+   "icon": "🎮",
+   "fields": {
+    "notify_discord_enable": {
+     "label": "启用 Discord",
+     "type": "bool",
+     "tip": "服务器能访问 Discord 时可用"
+    },
+    "notify_discord_webhook": {
+     "label": "Webhook URL",
+     "type": "password",
+     "placeholder": "https://discord.com/api/webhooks/xxx",
+     "tip": "频道设置 → 整合 → Webhook → 复制 Webhook 网址"
+    },
+    "notify_discord_username": {
+     "label": "自定义用户名",
+     "type": "str",
+     "placeholder": "可选",
+     "tip": "消息显示的发件人名字"
+    },
+    "notify_discord_avatar_url": {
+     "label": "自定义头像 URL",
+     "type": "str",
+     "placeholder": "可选",
+     "tip": "消息头像图片地址"
+    },
+    "notify_discord_color": {
+     "label": "嵌入消息颜色",
+     "type": "str",
+     "placeholder": "可选，如 #ec4899",
+     "tip": "左侧色条颜色"
+    }
+   }
+  },
+  "notify_smtp": {
+   "title": "SMTP 邮箱",
+   "icon": "📧",
+   "fields": {
+    "notify_smtp_enable": {
+     "label": "启用 SMTP",
+     "type": "bool",
+     "tip": "邮件推送，支持发送截图；QQ 邮箱需填授权码而非登录密码"
+    },
+    "notify_smtp_host": {
+     "label": "SMTP 服务器",
+     "type": "str",
+     "placeholder": "如 smtp.qq.com",
+     "tip": "QQ 邮箱 smtp.qq.com、163 邮箱 smtp.163.com"
+    },
+    "notify_smtp_user": {
+     "label": "用户名/邮箱",
+     "type": "str",
+     "placeholder": "如 123456@qq.com",
+     "tip": "登录邮箱的完整地址"
+    },
+    "notify_smtp_password": {
+     "label": "密码/授权码",
+     "type": "password",
+     "placeholder": "留空则不修改",
+     "tip": "QQ / 163 邮箱在设置里开启 SMTP 后生成授权码"
+    },
+    "notify_smtp_From": {
+     "label": "发件人",
+     "type": "str",
+     "placeholder": "一般与用户名相同",
+     "tip": "部分邮箱要求发件人必须是本邮箱地址"
+    },
+    "notify_smtp_To": {
+     "label": "收件人",
+     "type": "str",
+     "placeholder": "多个用逗号分隔",
+     "tip": "可以填自己的邮箱收通知"
+    },
+    "notify_smtp_port": {
+     "label": "端口",
+     "type": "str",
+     "placeholder": "默认 465",
+     "tip": "SSL 通常是 465，STARTTLS 通常是 587"
+    },
+    "notify_smtp_ssl": {
+     "label": "SSL 连接",
+     "type": "bool",
+     "tip": "端口 465 时开启"
+    },
+    "notify_smtp_starttls": {
+     "label": "STARTTLS",
+     "type": "bool",
+     "tip": "端口 587 时开启"
+    },
+    "notify_smtp_ssl_unverified": {
+     "label": "不验证 SSL 证书",
+     "type": "bool",
+     "tip": "自签名证书的邮箱才推荐开启"
+    }
+   }
+  },
+  "notify_webhook": {
+   "title": "通用 Webhook",
+   "icon": "🕸️",
+   "fields": {
+    "notify_webhook_enable": {
+     "label": "启用 Webhook",
+     "type": "bool",
+     "tip": "想接到自建服务 / 其他推送平台时用，支持自定义请求方法、Headers 与 Body"
+    },
+    "notify_webhook_url": {
+     "label": "接收地址",
+     "type": "str",
+     "placeholder": "如 http://localhost:8080/notify",
+     "tip": "注意 Docker 容器内能否访问该地址（宿主机可用 172.17.0.1 或实际内网 IP）"
+    },
+    "notify_webhook_method": {
+     "label": "请求方法",
+     "type": "select",
+     "options": {
+      "": "默认 POST",
+      "GET": "GET",
+      "POST": "POST",
+      "PUT": "PUT",
+      "DELETE": "DELETE"
+     },
+     "tip": "留空按小助手默认 POST"
+    },
+    "notify_webhook_headers": {
+     "label": "自定义 Headers",
+     "type": "textarea",
+     "placeholder": "JSON 格式，如 {\"Authorization\": \"Bearer token\"}",
+     "tip": "JSON 格式，需要鉴权的平台通常要填"
+    },
+    "notify_webhook_body": {
+     "label": "请求体模板",
+     "type": "textarea",
+     "placeholder": "JSON 或字符串，支持 {title} {content} {image}",
+     "tip": "可用 {title} {content} {image} 占位符"
+    }
+   }
+  },
+  "notify_matrix": {
+   "title": "更多渠道 · Matrix / PushDeer / KOOK / QQ 机器人 / 自定义",
+   "icon": "🧩",
+   "collapsed": true,
+   "note": "折叠区里是相对冷门的推送渠道与自定义通知，按需点开填写；改完同样需要重启容器生效。",
+   "fields": {
+    "notify_matrix_enable": {
+     "label": "Matrix · 启用",
+     "type": "bool"
+    },
+    "notify_matrix_homeserver": {
+     "label": "Matrix · 服务器地址",
+     "type": "str",
+     "placeholder": "如 https://matrix.org"
+    },
+    "notify_matrix_user_id": {
+     "label": "Matrix · 用户 ID",
+     "type": "str",
+     "placeholder": "如 @user:matrix.org"
+    },
+    "notify_matrix_access_token": {
+     "label": "Matrix · Access Token",
+     "type": "password",
+     "placeholder": "登录后由服务器分发"
+    },
+    "notify_matrix_room_id": {
+     "label": "Matrix · 房间 ID",
+     "type": "str",
+     "placeholder": "如 !abc:matrix.org"
+    },
+    "notify_matrix_device_id": {
+     "label": "Matrix · 设备 ID",
+     "type": "str",
+     "placeholder": "10 位大写字母/数字"
+    },
+    "notify_matrix_proxy": {
+     "label": "Matrix · 代理",
+     "type": "str",
+     "placeholder": "可选"
+    },
+    "notify_matrix_separately_text_media": {
+     "label": "Matrix · 文字与图片分开发送",
+     "type": "bool"
+    },
+    "notify_pushdeer_enable": {
+     "label": "PushDeer · 启用",
+     "type": "bool",
+     "tip": "自建或官方 PushDeer 服务"
+    },
+    "notify_pushdeer_token": {
+     "label": "PushDeer · Token",
+     "type": "password"
+    },
+    "notify_pushdeer_url": {
+     "label": "PushDeer · 自定义服务 URL",
+     "type": "str",
+     "placeholder": "可选"
+    },
+    "notify_kook_enable": {
+     "label": "KOOK · 启用",
+     "type": "bool",
+     "tip": "KOOK 机器人，支持发送截图"
+    },
+    "notify_kook_token": {
+     "label": "KOOK · 机器人 Token",
+     "type": "password",
+     "placeholder": "开发者中心机器人 Token"
+    },
+    "notify_kook_target_id": {
+     "label": "KOOK · 目标 ID",
+     "type": "str",
+     "placeholder": "用户 ID 或频道 ID"
+    },
+    "notify_kook_chat_type": {
+     "label": "KOOK · 消息类型",
+     "type": "str",
+     "placeholder": "1 私聊 / 9 频道"
+    },
+    "notify_meow_enable": {
+     "label": "MeoW · 启用",
+     "type": "bool",
+     "tip": "MeoW 推送（iOS 通知）"
+    },
+    "notify_meow_nickname": {
+     "label": "MeoW · 昵称",
+     "type": "str"
+    },
+    "notify_onebot_enable": {
+     "label": "OneBot · 启用",
+     "type": "bool",
+     "tip": "支持 NapCatQQ / OpenShamrock 等 OneBot 实现"
+    },
+    "notify_onebot_endpoint": {
+     "label": "OneBot · 服务端点 URL",
+     "type": "str",
+     "placeholder": "如 http://127.0.0.1:3000"
+    },
+    "notify_onebot_token": {
+     "label": "OneBot · Access Token",
+     "type": "password",
+     "placeholder": "可选"
+    },
+    "notify_onebot_user_id": {
+     "label": "OneBot · 接收用户 ID",
+     "type": "str",
+     "placeholder": "可选"
+    },
+    "notify_onebot_group_id": {
+     "label": "OneBot · 接收群组 ID",
+     "type": "str",
+     "placeholder": "可选"
+    },
+    "notify_gocqhttp_enable": {
+     "label": "go-cqhttp · 启用",
+     "type": "bool",
+     "tip": "已停止维护，老用户仍可用"
+    },
+    "notify_gocqhttp_endpoint": {
+     "label": "go-cqhttp · 服务端点 URL",
+     "type": "str"
+    },
+    "notify_gocqhttp_message_type": {
+     "label": "go-cqhttp · 消息类型",
+     "type": "select",
+     "options": {
+      "": "默认",
+      "private": "私聊",
+      "group": "群消息"
+     }
+    },
+    "notify_gocqhttp_token": {
+     "label": "go-cqhttp · Access Token",
+     "type": "password",
+     "placeholder": "可选"
+    },
+    "notify_gocqhttp_user_id": {
+     "label": "go-cqhttp · 接收用户 ID",
+     "type": "str",
+     "placeholder": "可选"
+    },
+    "notify_gocqhttp_group_id": {
+     "label": "go-cqhttp · 接收群组 ID",
+     "type": "str",
+     "placeholder": "可选"
+    },
+    "notify_custom_enable": {
+     "label": "自定义通知 · 启用",
+     "type": "bool",
+     "tip": "完全自定义请求地址与请求体，支持截图"
+    },
+    "notify_custom_url": {
+     "label": "自定义通知 · 请求 URL",
+     "type": "str",
+     "placeholder": "如 http://localhost:3000/send_msg"
+    },
+    "notify_custom_method": {
+     "label": "自定义通知 · 请求类型",
+     "type": "str",
+     "placeholder": "get / post"
+    },
+    "notify_custom_datatype": {
+     "label": "自定义通知 · 数据类型",
+     "type": "str",
+     "placeholder": "data / json"
+    },
+    "notify_custom_image": {
+     "label": "自定义通知 · 图片模板",
+     "type": "textarea",
+     "placeholder": "可选，OneBot 参考格式"
+    },
+    "notify_custom_data": {
+     "label": "自定义通知 · 请求体",
+     "type": "textarea",
+     "placeholder": "OneBot 参考 {user_id: 114514, message: [...]}"
+    },
+    "notify_winotify_enable": {
+     "label": "Windows 原生通知",
+     "type": "bool",
+     "tip": "仅在 Windows 本机直接运行小助手时有效，Docker 部署下不生效"
+    }
+   }
+  },
+  "other": {
+   "title": "其他设置",
+   "icon": "🔧",
+   "fields": {
+    "telemetry_enable": {
+     "label": "匿名遥测",
+     "type": "bool"
+    },
+    "auto_update": {
+     "label": "自动更新",
+     "type": "bool"
+    },
+    "update_source": {
+     "label": "更新源",
+     "type": "select",
+     "options": {
+      "GitHub": "GitHub",
+      "MirrorChyan": "Mirror酱"
+     }
+    },
+    "auto_set_resolution_enable": {
+     "label": "自动修改分辨率",
+     "type": "bool"
+    },
+    "auto_battle_detect_enable": {
+     "label": "自动战斗检测",
+     "type": "bool"
+    },
+    "ocr_gpu_acceleration": {
+     "label": "OCR 加速",
+     "type": "select",
+     "options": {
+      "auto": "自动",
+      "gpu": "GPU",
+      "onnx_dml": "ONNX DML",
+      "cpu": "CPU",
+      "openvino_cpu": "OpenVINO CPU",
+      "onnx_cpu": "ONNX CPU"
+     }
+    },
+    "use_background_screenshot": {
+     "label": "后台截图",
+     "type": "bool"
+    },
+    "cloud_game_enable": {
+     "label": "云游戏",
+     "type": "bool"
+    },
+    "browser_headless_enable": {
+     "label": "浏览器无窗口模式",
+     "type": "bool"
+    },
+    "autoplot_skip_enable": {
+     "label": "自动跳过对话",
+     "type": "bool"
+    },
+    "autoplot_click_enable": {
+     "label": "自动选择对话选项",
+     "type": "bool"
+    }
+   }
+  }
+ },
+ "notify_rules": {
+  "0": {
+   "group": "notify_serverchan",
+   "enable": "notify_serverchanturbo_enable",
+   "required": {
+    "0": "notify_serverchanturbo_sctkey"
+   }
+  },
+  "1": {
+   "group": "notify_serverchan",
+   "enable": "notify_serverchan3_enable",
+   "required": {
+    "0": "notify_serverchan3_sendkey"
+   }
+  },
+  "2": {
+   "group": "notify_bark",
+   "enable": "notify_bark_enable",
+   "required": {
+    "0": "notify_bark_key"
+   }
+  },
+  "3": {
+   "group": "notify_dingtalk",
+   "enable": "notify_dingtalk_enable",
+   "required": {
+    "0": "notify_dingtalk_token"
+   }
+  },
+  "4": {
+   "group": "notify_pushplus",
+   "enable": "notify_pushplus_enable",
+   "required": {
+    "0": "notify_pushplus_token"
+   }
+  },
+  "5": {
+   "group": "notify_wechat",
+   "enable": "notify_wechatworkbot_enable",
+   "required": {
+    "0": "notify_wechatworkbot_key"
+   }
+  },
+  "6": {
+   "group": "notify_wechat",
+   "enable": "notify_wechatworkapp_enable",
+   "required": {
+    "0": "notify_wechatworkapp_corpid",
+    "1": "notify_wechatworkapp_corpsecret",
+    "2": "notify_wechatworkapp_agentid",
+    "3": "notify_wechatworkapp_touser"
+   }
+  },
+  "7": {
+   "group": "notify_lark",
+   "enable": "notify_lark_enable",
+   "required": {
+    "0": "notify_lark_webhook"
+   }
+  },
+  "8": {
+   "group": "notify_telegram",
+   "enable": "notify_telegram_enable",
+   "required": {
+    "0": "notify_telegram_token",
+    "1": "notify_telegram_userid"
+   }
+  },
+  "9": {
+   "group": "notify_gotify",
+   "enable": "notify_gotify_enable",
+   "required": {
+    "0": "notify_gotify_url",
+    "1": "notify_gotify_token"
+   }
+  },
+  "10": {
+   "group": "notify_discord",
+   "enable": "notify_discord_enable",
+   "required": {
+    "0": "notify_discord_webhook"
+   }
+  },
+  "11": {
+   "group": "notify_smtp",
+   "enable": "notify_smtp_enable",
+   "required": {
+    "0": "notify_smtp_host",
+    "1": "notify_smtp_user",
+    "2": "notify_smtp_password",
+    "3": "notify_smtp_To"
+   }
+  },
+  "12": {
+   "group": "notify_webhook",
+   "enable": "notify_webhook_enable",
+   "required": {
+    "0": "notify_webhook_url"
+   }
+  },
+  "13": {
+   "group": "notify_matrix",
+   "enable": "notify_matrix_enable",
+   "required": {
+    "0": "notify_matrix_homeserver",
+    "1": "notify_matrix_access_token",
+    "2": "notify_matrix_room_id"
+   }
+  },
+  "14": {
+   "group": "notify_matrix",
+   "enable": "notify_pushdeer_enable",
+   "required": {
+    "0": "notify_pushdeer_token"
+   }
+  },
+  "15": {
+   "group": "notify_matrix",
+   "enable": "notify_kook_enable",
+   "required": {
+    "0": "notify_kook_token",
+    "1": "notify_kook_target_id"
+   }
+  },
+  "16": {
+   "group": "notify_matrix",
+   "enable": "notify_meow_enable",
+   "required": {
+    "0": "notify_meow_nickname"
+   }
+  },
+  "17": {
+   "group": "notify_matrix",
+   "enable": "notify_onebot_enable",
+   "required": {
+    "0": "notify_onebot_endpoint"
+   }
+  },
+  "18": {
+   "group": "notify_matrix",
+   "enable": "notify_gocqhttp_enable",
+   "required": {
+    "0": "notify_gocqhttp_endpoint"
+   }
+  },
+  "19": {
+   "group": "notify_matrix",
+   "enable": "notify_custom_enable",
+   "required": {
+    "0": "notify_custom_url"
+   }
+  },
+  "20": {
+   "group": "notify_matrix",
+   "enable": "notify_winotify_enable",
+   "required": {}
+  }
+ }
+}
