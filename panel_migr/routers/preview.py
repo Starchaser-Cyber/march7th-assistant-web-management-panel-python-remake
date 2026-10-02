@@ -120,6 +120,10 @@ async def ws_h264(websocket) -> None:
         await _close(websocket, 1013, err)
         return
 
+    # fps 是面板侧参数（白名单 15/30，v1.20），不转发给上游（上游 CDP 固定 everyNthFrame=1）
+    qf = websocket.url.query.split("fps=")[-1].split("&")[0] if "fps=" in websocket.url.query else ""
+    fps = pv.normalize_fps(qf)
+
     ws_url = base.replace("http://", "ws://", 1) + "/ws"
     keep = [k for k in ("token", "res", "quality") if k + "=" in websocket.url.query]
     if keep:
@@ -139,7 +143,7 @@ async def ws_h264(websocket) -> None:
         return
 
     proc = await asyncio.create_subprocess_exec(
-        config.FFMPEG_BIN, *pv.FFMPEG_ARGS,
+        config.FFMPEG_BIN, *pv.build_ffmpeg_args(fps),
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,

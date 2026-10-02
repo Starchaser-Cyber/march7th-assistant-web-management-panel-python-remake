@@ -182,7 +182,8 @@ function doUpdate() {
     .then(function(d){
       if (d && d.ok) {
         alert('✅ ' + d.msg);
-        location.reload();
+        /* v1.20：整包更新后面板约 2 秒自动重启，稍等再刷新避免撞上重启窗口 */
+        setTimeout(function(){ location.reload(); }, 4500);
       } else {
         alert('❌ ' + (d && d.msg ? d.msg : '更新失败'));
         btn.disabled = false; btn.textContent = '一键更新';
@@ -753,7 +754,7 @@ function initLogExport() {
 }
 
 /* ===== v1.19 游戏画面实时预览 ===== */
-var pv = {ws:null, on:false, paused:false, res:'720p', enc:'jpeg', retry:0, timer:null, lastFrame:0, mse:null, sb:null, pq:[], rmWait:false};
+var pv = {ws:null, on:false, paused:false, res:'720p', enc:'jpeg', fps:'15', retry:0, timer:null, lastFrame:0, mse:null, sb:null, pq:[], rmWait:false};
 function pvBase() {
   var proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
   var base = location.pathname.replace(/\/[^\/]*$/, '/');
@@ -782,12 +783,13 @@ function pvStop() {
   document.getElementById('pvBadge').style.background = 'var(--muted,#8a8f98)';
   document.getElementById('pvBox').style.display = 'none';
   document.getElementById('pvRes').style.display = 'none';
+  document.getElementById('pvFps').style.display = 'none';
   document.getElementById('pvFull').style.display = 'none';
   document.getElementById('pvEnc').style.display = 'none';
 }
 function pvUrl(token) {
   var u = pvBase() + '?token=' + token + '&res=' + pv.res;
-  if (pv.enc === 'h264') u = pvBase().replace(/\/ws$/, '/ws264') + '?token=' + token + '&res=' + pv.res;
+  if (pv.enc === 'h264') u = pvBase().replace(/\/ws$/, '/ws264') + '?token=' + token + '&res=' + pv.res + '&fps=' + pv.fps;
   return u;
 }
 function pvSurface() {
@@ -815,6 +817,9 @@ function pvEncUi() {
   b.textContent = on ? '⚡H.264·开' : '⚡H.264';
   b.style.background = on ? 'var(--green,#22c55e)' : '';
   b.style.color = on ? '#fff' : '';
+  /* v1.20：帧率选择只在 H.264 档且预览开启时可见 */
+  var fp = document.getElementById('pvFps');
+  if (fp) fp.style.display = (on && pv.on) ? '' : 'none';
 }
 function pvMseTeardown() {
   var vid = document.getElementById('pvVideo');
@@ -931,6 +936,11 @@ function pvSetRes(v) {
   pv.res = v;
   if (pv.ws) { try { pv.ws.close(); } catch(e) {} pv.ws = null; }
   if (pv.on) pvConnect();
+}
+function pvSetFps(v) {
+  pv.fps = (String(v) === '30') ? '30' : '15';
+  if (pv.ws) { try { pv.ws.close(); } catch(e) {} pv.ws = null; }
+  if (pv.on && pv.enc === 'h264') pvConnect();
 }
 function pvFullscreen() {
   var el = document.getElementById('pvBox');

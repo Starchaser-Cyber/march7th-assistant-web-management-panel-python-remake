@@ -11,4 +11,6 @@ sessions/
 *.log
 *.sqlite
 *.bak
+*.bak.*
 *.tmp
+panel_migr/tests/_tmp/

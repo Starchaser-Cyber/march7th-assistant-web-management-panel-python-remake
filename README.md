@@ -4,7 +4,7 @@
 
 ![许可证](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Python 版本](https://img.shields.io/badge/python-3.11%2B-green)
-![最新版本](https://img.shields.io/badge/version-v1.19.0--python-orange)
+![最新版本](https://img.shields.io/badge/version-v1.20.0--python-orange)
 ![构建状态](https://img.shields.io/badge/build-140%20tests%20passing-brightgreen)
 ![Stars](https://img.shields.io/github/stars/Starchaser-Cyber/march7th-assistant-web-management-panel-python-remake?style=flat)
 
@@ -14,7 +14,7 @@
 
 本面板是 [三月七小助手（March7thAssistant）](https://github.com/moesnow/March7thAssistant) 的配套网页管理工具。原项目跑在电脑上的 GUI / 命令行程序，人不在电脑前就没法操作；把小助手部署到服务器后，你用手机或电脑浏览器就能随时远程管理——启动日常任务、清体力、改配置、看日志、盯监控，全程不需要命令行。
 
-本仓库是原 [PHP 版面板](https://github.com/Starchaser-Cyber/march7th-assistant-web-management-panel) 的 **Python 重制版**：整个面板由 **Python 3.11+ / FastAPI / Uvicorn** 驱动，systemd 常驻、崩溃自动重启，不再依赖 PHP-FPM 与 nginx fastcgi 链路；实时数据通过 **WebSocket 事件流**推送，监控按秒级采样刷新；游戏画面预览采用 **CDP 帧流反代 + 按日 HMAC 令牌**，支持 720P/480P 切档与断线重连。界面、操作习惯与数据文件与原版保持一致：登录态、面板配置、实例列表、密码文件全部直接复用，切换无需迁移数据，新旧面板还能共用同一登录态互相兜底。
+本仓库是原 [PHP 版面板](https://github.com/Starchaser-Cyber/march7th-assistant-web-management-panel) 的 **Python 重制版**：整个面板由 **Python 3.11+ / FastAPI / Uvicorn** 驱动，systemd 常驻、崩溃自动重启，不再依赖 PHP-FPM 与 nginx fastcgi 链路；实时数据通过 **WebSocket 事件流**推送，监控按秒级采样刷新（cgroup 直读、零子进程，开销极低）；游戏画面预览采用 **CDP 帧流反代 + 按日 HMAC 令牌**，支持 720P/480P 切档、H.264 15/30 帧可选与断线重连。界面、操作习惯与数据文件与原版保持一致：登录态、面板配置、实例列表、密码文件全部直接复用，切换无需迁移数据，新旧面板还能共用同一登录态互相兜底。
 
 - ✅ 适配已部署 Docker 版小助手的玩家；还没部署的，先按下方 [快速开始](#-快速开始--部署教程) 从零搞定（约 20 分钟）
 - ✅ 纯 Python 依赖、文件存储（JSON + SQLite 事件库），**无需数据库**，开箱即用
@@ -37,7 +37,7 @@
 - **资源监控仪表盘**：CPU / 内存 / 磁盘 / 负载 / 网络速率 / 运行时长六个指标实时跳动 + 三条实时曲线（近 1 分钟 / 1 小时 / 1 天切换），主机信息（系统 / Docker 版本 / 核心 / 内存 / 磁盘）自动采集；面板不开曲线也不断——卡片内一键复制带 key 的采样 curl 命令挂到宿主 cron 即可
 - **小助手镜像检查与更新**：直查 GHCR 官方镜像 latest 发布时间（不再误报），一键更新镜像并自动依次尝试官方源 / 南大 / DaoCloud / dockerproxy 加速源
 - **面板自动更新 + 版本备份回滚**：打开面板自动检查新版本，更新前自动备份当前版本到 `backups/`（保留 5 份），概览页一键回滚，回滚前再备份一次防手滑；附带更新源连通性一键测试
-- **游戏画面实时预览**：概览页一键开启实时观看云游戏画面（约 15 帧/秒），720P / 480P 切换与全屏，按日轮换 HMAC 令牌鉴权，断线自动重连、切后台自动省流
+- **游戏画面实时预览**：概览页一键开启实时观看云游戏画面（JPEG 约 15 帧/秒，H.264 极致档可选 15 / 30 帧），720P / 480P 切换与全屏，按日轮换 HMAC 令牌鉴权，断线自动重连、切后台自动省流
 - **一键体检**：自动检查 Docker 权限、容器状态、配置可写、推送通道、计划任务心跳、镜像与面板版本、磁盘空间等 10 项，按 ✅⚠️❌ 分级给出问题与建议
 - **异常主动告警**：Bark / Server 酱 / Webhook 推送通道，容器掉线、任务被中断、久无输出第一时间推到手机，可一键发送测试消息
 
@@ -64,7 +64,7 @@
 - **WebSocket 事件流**：日志、监控、告警实时推送，页面无需刷新
 - **systemd 常驻**：`Restart=always` 崩溃自动重启、开机自启；默认仅监听 `127.0.0.1`
 - **可靠数据落盘**：监控数据原子写（临时文件 + `os.replace`），杜绝并发写坏 JSON
-- **可测试**：pytest 回归 `140 passed, 3 skipped`，路由层与业务层分离
+- **可测试**：pytest 回归 `158 passed, 3 skipped`，路由层与业务层分离
 
 ## 界面预览 / 效果展示
 
@@ -90,7 +90,7 @@
 
 ![配置页：图形化编辑](./assets/preview-config.png)
 
-**游戏画面实时预览：浏览器直连观看游戏画面（JPEG / H.264 极致档）**
+**游戏画面实时预览：不用远程桌面、不用投屏，浏览器直连实时观看云游戏画面，挂机、排队、战斗进度一眼可见（JPEG / H.264 极致档）**
 
 ![游戏画面实时预览卡片](./assets/feature-preview-card.png)
 
@@ -98,16 +98,7 @@
 
 ![实时预览中的游戏画面](./assets/feature-preview-frame.jpg)
 
-> 详细功能介绍见下方 [🎮 游戏画面实时预览（特色功能）](#-游戏画面实时预览特色功能) 一节。
-
 ## 🎮 游戏画面实时预览（特色功能）
-
-面板概览页内置「游戏画面卡片」，**不用远程桌面、不用投屏**，直接在浏览器里实时观看云游戏画面，
-挂机、排队、战斗进度一眼可见：
-
-![实时预览卡片](./assets/feature-preview-card.png)
-
-![预览中的真实游戏画面（720P 截帧）](./assets/feature-preview-frame.jpg)
 
 ### 工作原理
 
@@ -117,7 +108,7 @@
             → 浏览器渲染：JPEG 逐帧 ｜ 或 ffmpeg 转 H.264 → MSE 极致档
 ```
 
-- **两档画质**：点「实时」徽章旁的档位下拉切换 `720P / 480P`；编码方式可选 JPEG 与 ⚡H.264
+- **两档画质 + 帧率可选**：点「实时」徽章旁的档位下拉切换 `720P / 480P`；编码方式可选 JPEG 与 ⚡H.264（H.264 档帧率可选 15 / 30 帧，30 帧更流畅、15 帧更省流）
 - **按日令牌鉴权**：令牌 = `HMAC-SHA256(密钥, 当天日期)` 截断 32 位，**每天自动轮换**，
   泄露的令牌过期即失效；面板与容器双端校验，不经外网端口暴露
 - **断线自动重连**：网络抖动按指数退避重连；切到后台标签页自动降频省流
@@ -128,7 +119,7 @@
 | 档位 | 编码 | 帧率 | CPU 占用 | 适用场景 |
 |---|---|---|---|---|
 | 默认（流畅） | JPEG 逐帧 | ~15 帧/秒 | 极低 | 挂机看进度、低配服务器 |
-| ⚡H.264（极致） | H.264 → fMP4 (MSE) | ~15 帧/秒 | 需 ffmpeg 转码 | 画面更细腻、拖动/文字边缘更清晰 |
+| ⚡H.264（极致） | H.264 → fMP4 (MSE) | 15 / 30 帧可选 | 需 ffmpeg 转码 | 画面更细腻、拖动/文字边缘更清晰；30 帧更流畅、15 帧更省流 |
 
 **开启 H.264 极致档**（服务器装一次即可，装完不用重启面板）：
 
@@ -217,7 +208,7 @@ M7A_PANEL_DIR="$(pwd)/.." .venv/bin/python main.py
 .venv/bin/python -m compileall -q .
 ```
 
-预期结果：`140 passed, 3 skipped`。
+预期结果：`158 passed, 3 skipped`。
 
 5. 浏览器访问：
 
@@ -365,7 +356,7 @@ docker compose up -d     # 首次拉取镜像约 1-2GB
 - **仪表盘**：容器状态、系统资源与最近事件；WebSocket 连接建立后数据自动刷新，断开时页面显示重连提示。
 - **任务管理**：点击任务卡片触发（`main` 全量运行、`daily` 日常任务、`power` 清体力等）；危险动作（`restart`、`update`、`stop` 等）触发二次确认并静默告警 600 秒。
 - **日志与历史**：实时日志流 + 最近 200 条任务历史；日志静默超过 90 秒视为任务结束并自动算好耗时，容器已停止且日志久不更新标记为「已中断」。
-- **游戏画面预览**：进入预览自动向容器内 `preview_server`（默认端口 `9223`）申请帧流；支持 720P/480P 切换，令牌按日轮换，断线自动重连。未部署预览组件时卡片给出明确提示，不影响其他功能。
+- **游戏画面预览**：进入预览自动向容器内 `preview_server`（默认端口 `9223`）申请帧流；支持 720P/480P 切换与 15 / 30 帧（H.264）选择，令牌按日轮换，断线自动重连。未部署预览组件时卡片给出明确提示，不影响其他功能。
 - **配置编辑**：可视化修改面板配置与小助手 `config.yaml`，保存前做结构校验与自动备份，避免写坏数据。
 
 ### 计划任务怎么挂（Docker 场景的重点）
@@ -405,22 +396,24 @@ curl -s "http://你的面板地址/index.php?scheduler=1&key=自动生成的key"
 ### 自动更新与更新源
 
 - 面板默认「自动检查」模式：打开面板静默检查最新 Release，发现新版本顶部弹提醒条，一键更新（更新前自动备份到 `backups/`，出问题在「版本备份 / 回滚」卡片退回）；可切换为「手动更新」，也可「忽略此版本」。
+- **v1.20 起一键更新为 ZIP 整包自更新**：下载 Release 资产 `V+版本号.zip`（整个项目的发布包），校验包结构与版本号后整体换入，完成约 2 秒后面板自动重启生效；下载失败或校验不过自动回滚，旧版 index.php 更新流程仍然兼容。
 - 更新源通过环境变量配置：
 
 | 环境变量 | 说明 | 示例 |
 |---|---|---|
-| `M7A_PANEL_VERSION` | 当前版本号（页面显示） | `1.19` |
+| `M7A_PANEL_VERSION` | 当前版本号（页面显示） | `1.20` |
 | `M7A_UPDATE_HOST` | 更新主机 | `https://github.com` |
 | `M7A_UPDATE_OWNER` | 仓库所有者 | `Starchaser-Cyber` |
-| `M7A_UPDATE_REPO` | 仓库名（默认指向原 PHP 仓库，发版本仓库时指向本仓库） | `march7th-assistant-web-management-panel-python-remake` |
+| `M7A_UPDATE_REPO` | 仓库名（默认指向本 Python 版仓库，用于拉取 Release 整包） | `march7th-assistant-web-management-panel-python-remake` |
 | `M7A_UPDATE_BRANCH` | 分支 | `main` |
 
 - **更新源测试**：概览页可一键测试 API 连通 / 文件下载 / 国内加速镜像连通性；刚建仓库还没发版时提示 404 属正常。
 - **多镜像下载**：更新时按「官方源 → 加速镜像 1 → 加速镜像 2 …」顺序尝试，任一成功即完成；加速镜像只是实时转发 GitHub 官方内容。
+- ⚠️ **杀毒软件误报提示**：Windows 从 Release 下载 `V*.zip` 或解压时若被杀毒软件拦截，属云扫描误报——包内仅项目源码、文档等纯文本文件，不含任何可执行程序；建议暂停实时防护或将文件加入信任区后再下载解压。
 
 ### 版本备份 / 一键回滚
 
-- 每次覆盖前自动把当前版本复制到 `backups/`（文件名含版本号 + 备份时间），只保留最近 5 份
+- 每次更新前自动把当前版本备份到 `backups/`（v1.20 起为 `panel_*.zip` 整包快照，旧版为 `index_*.php` 单文件；文件名含版本号 + 备份时间），合计只保留最近 5 份
 - 概览页「版本备份 / 回滚」卡片一键回滚，回滚前会把当前版本再备份一次，点错了也能救回来
 - 回滚接口需登录 + CSRF 校验，服务端只接受 `backups/` 目录内符合命名规则的文件
 
@@ -438,8 +431,8 @@ curl -s "http://你的面板地址/index.php?scheduler=1&key=自动生成的key"
 | `M7A_PANEL_DIR` | 面板数据目录（配置与 `data/` 所在处） | 任意绝对路径 | 代码上级目录 |
 | `M7A_LISTEN_HOST` | 监听地址 | IP / `0.0.0.0` | `127.0.0.1` |
 | `M7A_LISTEN_PORT` | 监听端口 | 1–65535 | `8787` |
-| `M7A_PANEL_VERSION` | 面板版本号（页面显示） | 语义化版本字符串 | `1.19` |
-| `M7A_UPDATE_HOST` / `M7A_UPDATE_OWNER` / `M7A_UPDATE_REPO` | 自更新来源仓库 | URL / 仓库名 | `https://github.com` / `starchaser-cyber` / `march7th-assistant-web-management-panel` |
+| `M7A_PANEL_VERSION` | 面板版本号（页面显示） | 语义化版本字符串 | `1.20` |
+| `M7A_UPDATE_HOST` / `M7A_UPDATE_OWNER` / `M7A_UPDATE_REPO` | 自更新来源仓库 | URL / 仓库名 | `https://github.com` / `starchaser-cyber` / `march7th-assistant-web-management-panel-python-remake` |
 | `M7A_PHP_UPSTREAM` | 未迁移请求回源地址（与旧版共存时使用） | URL | `http://127.0.0.1:9999` |
 | `M7A_SESSION_DIR` | 登录态共享目录（与 PHP 版面板互通） | 目录路径 | `/tmp` |
 | `M7A_PREVIEW_UP_PORT` | 预览帧源端口（容器内） | 1–65535 | `9223` |
@@ -491,8 +484,9 @@ journalctl -u m7a-panel -f      # 实时查看面板日志
     │   ├── write.py / get_write.py#     POST 类接口（操作与写入）
     │   ├── events.py              #     WebSocket 事件流
     │   └── preview.py             #     游戏画面预览帧流反代
-    ├── services/                  #   业务逻辑层（24 个模块）
+    ├── services/                  #   业务逻辑层（23 个 Python 模块）
     │   ├── monitor.py             #     监控采样与历史（原子写）
+    │   ├── sysmetrics.py          #     零 fork 指标直读（cgroup / Engine API）
     │   ├── containers.py          #     Docker 实例管理
     │   ├── schedule.py            #     计划任务
     │   ├── alerts.py              #     告警
@@ -501,7 +495,7 @@ journalctl -u m7a-panel -f      # 实时查看面板日志
     ├── templates/panel.html.j2    #   Jinja2 页面模板
     ├── static/                    #   前端 CSS / JS
     ├── scripts/                   #   辅助脚本
-    └── tests/                     #   pytest 测试（140 用例）
+    └── tests/                     #   pytest 测试（158 用例）
 ```
 
 > `.panel_pass.php`、`.env`、`data/`、`sessions/`、`backups/`、`*.log` 等运行时与敏感文件已被 `.gitignore` 排除，不会进入版本库。
@@ -559,7 +553,7 @@ Python 版写监控文件采用原子写，正常使用不会再损坏；若检�
 
 **10. 测试出现少量 `skipped` 正常吗？**
 
-正常。当前回归结果为 `140 passed, 3 skipped`，skipped 用例依赖特定环境（如 ffmpeg / 容器），环境不具备时自动跳过，不影响功能。
+正常。当前回归结果为 `158 passed, 3 skipped`，skipped 用例依赖特定环境（如 ffmpeg / 容器），环境不具备时自动跳过，不影响功能。
 
 ### 附：小助手与面板速查表
 
@@ -632,6 +626,31 @@ python3 -m venv .venv
 再次感谢每一位贡献者的审阅与建议！
 
 ## 更新日志（Changelog）
+
+### v1.20.0-python（2026-10-03）
+
+**一句话总结**：监控算法重写根治 CPU 超 100%、H.264 新增 15/30 帧档位、一键更新升级为 ZIP 整包自更新。
+
+✨ **新增**
+
+- H.264 极致档新增 **15 / 30 帧两档输出帧率**，预览面板可随时切档：30 帧更流畅、15 帧更省流（受上游帧源能力限制仅提供这两档）
+- 「一键更新」升级为 **ZIP 整包自更新**：下载 Release 的 `V+版本号.zip` 发布包，校验包结构与版本号后整体换入，出错自动回滚，完成约 2 秒后面板自动重启生效；旧版 index.php 更新流程仍兼容
+
+⚡ **优化**
+
+- 监控采样 **零 fork**：不再每次采样拉起 `docker stats`（旧实现单次阻塞 1 秒以上），改走 cgroup / Docker Engine API 直读，采样开销接近零，面板更轻快
+- 网络速率改为低频计数差分 + 速率回填，曲线平滑无锯齿；采样全程加锁，修复采样线程与页面请求并发读写监控文件的竞态
+
+🐛 **修复**
+
+- **彻底修复 CPU 使用率超过 100%（最高可达几十万 %）**：改为 cgroup CPU 时间差分计算，按物理定义钳制在合理上限内，数值永远可信
+- 历史监控数据里的超限脏点在下次读取时**一次性自动清洗**，旧曲线恢复干净
+- 修复版本号比较把 `-python` 后缀当分段、导致的「误报有新版本」
+- 修复 H.264 极致档长时间播放的**时间轴漂移**（帧到达率波动时越播越慢/快），现在帧率与播放时长稳定
+
+📝 **文档**
+
+- 实时预览介绍合并为一处、消除重复介绍；补充 15/30 帧档位说明与 v1.20 更新日志
 
 ### v1.19.0-python（2026-10-02）
 

@@ -24,14 +24,14 @@ HISTORY_KEEP = 200               # 历史最多保留条数
 SCHEDULE_WINDOW_SECONDS = 1800   # 计划任务补跑窗口（M2+）
 
 # ===== 面板自身更新（与 index.php define() 对齐，M4 可用环境变量覆盖）=====
-PANEL_VERSION = os.environ.get("M7A_PANEL_VERSION", "1.19")
+PANEL_VERSION = os.environ.get("M7A_PANEL_VERSION", "1.20")
 UPDATE_ENABLED = True
 UPDATE_TYPE = "github"           # gitea / github
 UPDATE_HOST = os.environ.get("M7A_UPDATE_HOST", "https://github.com")
 UPDATE_OWNER = os.environ.get("M7A_UPDATE_OWNER", "starchaser-cyber")
-UPDATE_REPO = os.environ.get("M7A_UPDATE_REPO", "march7th-assistant-web-management-panel")
+UPDATE_REPO = os.environ.get("M7A_UPDATE_REPO", "march7th-assistant-web-management-panel-python-remake")
 UPDATE_BRANCH = "main"
-BACKUP_KEEP = 5                  # 版本备份保留份数
+BACKUP_KEEP = 5                  # 版本备份保留份数（index_*.php 与 panel_*.zip 合并计数）
 
 # ===== 任务白名单（与 index.php $TASKS 对齐：key → 标签）=====
 TASKS = {

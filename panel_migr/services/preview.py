@@ -140,16 +140,42 @@ async def get_upstream(container: str) -> tuple[str | None, str]:
 
 # ===== H.264 极致档（ffmpeg: JPEG 帧 → H.264 fMP4 → 浏览器 MSE）=====
 
-FFMPEG_ARGS = [
-    "-hide_banner", "-loglevel", "error",
-    "-f", "image2pipe", "-c:v", "mjpeg", "-framerate", "15", "-i", "pipe:0",
-    "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
-    "-pix_fmt", "yuv420p", "-g", "15", "-keyint_min", "15", "-sc_threshold", "0",
-    "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-    "-f", "mp4",
-    "-movflags", "frag_keyframe+empty_moov+default_base_moof",
-    "pipe:1",
-]
+FPS_CHOICES = (15, 30)   # v1.20 帧率选项（不做 60：云游戏源达不到，徒增解码负担）
+DEFAULT_FPS = 15
+
+
+def normalize_fps(v) -> int:
+    """白名单化前端 fps 参数：非法值回落 15。"""
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return DEFAULT_FPS
+    return n if n in FPS_CHOICES else DEFAULT_FPS
+
+
+def build_ffmpeg_args(fps: int = DEFAULT_FPS) -> list:
+    """按帧率生成 ffmpeg 转码参数。
+
+    -use_wallclock_as_timestamps 1：输入时间轴锁墙钟。上游 CDP 帧到达率受游戏实际
+    帧率影响（7~30fps 波动）；旧版声明式 -framerate 15 在上游到 30fps 时 5s 墙钟会
+    产出 10.67s 媒体时间（延迟持续累积），实测新版在 7/15/30fps 任意到达率下媒体
+    时长均 ≈ 墙钟时长。
+    -vf fps=N：把输出节奏定死为 N 帧/秒（实验表明该滤镜必需）。
+    -g/-keyint_min=N：每个 fMP4 chunk 都以关键帧开始，端到端延迟 ≈ 1 个关键帧间隔。
+    """
+    fps = normalize_fps(fps)
+    return [
+        "-hide_banner", "-loglevel", "error",
+        "-f", "image2pipe", "-c:v", "mjpeg",
+        "-use_wallclock_as_timestamps", "1", "-framerate", str(fps), "-i", "pipe:0",
+        "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+        "-pix_fmt", "yuv420p",
+        "-g", str(fps), "-keyint_min", str(fps), "-sc_threshold", "0",
+        "-vf", f"fps={fps},scale=trunc(iw/2)*2:trunc(ih/2)*2",
+        "-f", "mp4",
+        "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+        "pipe:1",
+    ]
 
 
 def ffmpeg_available() -> bool:

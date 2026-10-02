@@ -147,6 +147,10 @@
               <option value="720p">720P 流畅</option>
               <option value="480p">480P 省流</option>
             </select>
+            <select id="pvFps" onchange="pvSetFps(this.value)" style="display:none;font-size:12px;padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:var(--card2);color:var(--text);" title="H.264 档输出帧率：15帧更省流，30帧更流畅">
+              <option value="15">15帧</option>
+              <option value="30">30帧</option>
+            </select>
             <button type="button" class="btn small gray" id="pvEnc" onclick="pvToggleEnc()" style="display:none;" title="H.264 极致档：更低延迟与码率（需服务器安装 ffmpeg）">⚡H.264</button>
             <button class="btn small gray" id="pvFull" onclick="pvFullscreen()" style="display:none;">全屏</button>
             <button class="btn small" id="pvToggle" onclick="pvToggle()">开启预览</button>
@@ -157,7 +161,7 @@
           <video id="pvVideo" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:none;" muted playsinline autoplay></video>
           <div id="pvMsg" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#aab2bd;font-size:14px;background:rgba(0,0,0,.55);text-align:center;padding:0 16px;">正在连接…</div>
         </div>
-        <p class="tip" style="margin:10px 0 0;">云游戏运行期间可实时观看画面（约15帧/秒，任务执行时画面持续变化）；m7a 每天仅在任务时段开启浏览器，其余时间无画面属正常。预览已走面板登录鉴权，请勿泄露面板地址与预览令牌。</p>
+        <p class="tip" style="margin:10px 0 0;">云游戏运行期间可实时观看画面（JPEG 档约15帧/秒；H.264 极致档可选 15/30 帧，30帧更流畅、15帧更省流，任务执行时画面持续变化）；m7a 每天仅在任务时段开启浏览器，其余时间无画面属正常。预览已走面板登录鉴权，请勿泄露面板地址与预览令牌。</p>
       </div>
 
       <div class="card">
@@ -282,7 +286,7 @@
           <span class="badge" style="background:var(--primary-soft);color:var(--primary);">保留最近 {{ (BACKUP_KEEP)|int }} 份</span>
         </h2>
         {% if  not bkList %}
-        <p class="tip" style="margin:0;">暂无备份。面板「一键更新」覆盖 index.php 前会自动把当前版本备份到 <code>backups/</code> 目录，更新出问题时可从这里一键回滚。</p>
+        <p class="tip" style="margin:0;">暂无备份。面板「一键更新」执行前会自动把当前版本备份到 <code>backups/</code> 目录（v1.20 起为 <code>panel_*.zip</code> 整包备份，旧版为 <code>index_*.php</code> 单文件），更新出问题时可从这里一键回滚。</p>
         {% else %}
         <div class="hist-table-wrap">
           <table class="hist-table">
