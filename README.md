@@ -4,7 +4,7 @@
 
 ![许可证](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Python 版本](https://img.shields.io/badge/python-3.11%2B-green)
-![最新版本](https://img.shields.io/badge/version-v1.20.0--python-orange)
+![最新版本](https://img.shields.io/badge/version-V1.20-orange)
 ![构建状态](https://img.shields.io/badge/build-140%20tests%20passing-brightgreen)
 ![Stars](https://img.shields.io/github/stars/Starchaser-Cyber/march7th-assistant-web-management-panel-python-remake?style=flat)
 
@@ -14,7 +14,7 @@
 
 本面板是 [三月七小助手（March7thAssistant）](https://github.com/moesnow/March7thAssistant) 的配套网页管理工具。原项目跑在电脑上的 GUI / 命令行程序，人不在电脑前就没法操作；把小助手部署到服务器后，你用手机或电脑浏览器就能随时远程管理——启动日常任务、清体力、改配置、看日志、盯监控，全程不需要命令行。
 
-本仓库是原 [PHP 版面板](https://github.com/Starchaser-Cyber/march7th-assistant-web-management-panel) 的 **Python 重制版**：整个面板由 **Python 3.11+ / FastAPI / Uvicorn** 驱动，systemd 常驻、崩溃自动重启，不再依赖 PHP-FPM 与 nginx fastcgi 链路；实时数据通过 **WebSocket 事件流**推送，监控按秒级采样刷新（cgroup 直读、零子进程，开销极低）；游戏画面预览采用 **CDP 帧流反代 + 按日 HMAC 令牌**，支持 720P/480P 切档、H.264 15/30 帧可选与断线重连。界面、操作习惯与数据文件与原版保持一致：登录态、面板配置、实例列表、密码文件全部直接复用，切换无需迁移数据，新旧面板还能共用同一登录态互相兜底。
+一个由 **Python 3.11+ / FastAPI / Uvicorn** 全栈驱动的现代化管理面板：systemd 常驻、崩溃自动重启，不依赖 fastcgi 等传统链路；实时数据通过 **WebSocket 事件流**推送，监控按秒级采样刷新（cgroup 直读、零子进程，开销极低）；游戏画面预览采用 **CDP 帧流反代 + 按日 HMAC 令牌**，支持 720P/480P 切档、H.264 15/30 帧可选与断线重连。界面与操作习惯保持延续，登录态、面板配置、实例列表、密码文件全部直接复用，升级无需迁移数据。
 
 - ✅ 适配已部署 Docker 版小助手的玩家；还没部署的，先按下方 [快速开始](#-快速开始--部署教程) 从零搞定（约 20 分钟）
 - ✅ 纯 Python 依赖、文件存储（JSON + SQLite 事件库），**无需数据库**，开箱即用
@@ -64,7 +64,7 @@
 - **WebSocket 事件流**：日志、监控、告警实时推送，页面无需刷新
 - **systemd 常驻**：`Restart=always` 崩溃自动重启、开机自启；默认仅监听 `127.0.0.1`
 - **可靠数据落盘**：监控数据原子写（临时文件 + `os.replace`），杜绝并发写坏 JSON
-- **可测试**：pytest 回归 `158 passed, 3 skipped`，路由层与业务层分离
+- **可测试**：pytest 回归 `166 passed, 3 skipped`，路由层与业务层分离
 
 ## 界面预览 / 效果展示
 
@@ -208,7 +208,7 @@ M7A_PANEL_DIR="$(pwd)/.." .venv/bin/python main.py
 .venv/bin/python -m compileall -q .
 ```
 
-预期结果：`158 passed, 3 skipped`。
+预期结果：`166 passed, 3 skipped`。
 
 5. 浏览器访问：
 
@@ -235,7 +235,7 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-> **关键注意事项**：`M7A_PANEL_DIR` 指向的是**面板数据目录**（存放 `.panel_config.php`、`.instances.php`、`.panel_pass.php`、`data/` 的位置）。若你是从 PHP 版切换而来，直接指向原 PHP 面板目录即可复用全部配置与数据；全新部署则指定一个空目录。**不要照抄他人的生产路径**。
+> **关键注意事项**：`M7A_PANEL_DIR` 指向的是**面板数据目录**（存放 `.panel_config.php`、`.instances.php`、`.panel_pass.php`、`data/` 的位置）。若要复用现有面板的全部配置与数据，直接指向原面板数据目录即可；全新部署则指定一个空目录。**不要照抄他人的生产路径**。
 
 3. 创建 systemd 服务文件 `/etc/systemd/system/m7a-panel.service`：
 
@@ -347,7 +347,7 @@ docker compose up -d     # 首次拉取镜像约 1-2GB
 ### 首次访问
 
 1. 部署完成后访问 `http://127.0.0.1:8787`（或你的反代域名）。
-2. 全新部署时按页面提示设置管理员密码；从 PHP 版切换则沿用原密码（密码文件 `.panel_pass.php` 共享）。
+2. 全新部署时按页面提示设置管理员密码；从旧版面板切换则沿用原密码（密码文件共享）。
 3. 登录后主界面依次为：实例状态卡片 → 游戏画面卡片 → 资源监控 → 任务按钮 → 计划任务 / 历史 → 日志流。
 4. 实例列表里填好「容器名」（`docker ps` 里的 NAME）与「小助手目录」（宿主机上含 `config.yaml` / `logs/` 的绝对路径），多账号点侧边栏下拉切换。
 
@@ -366,7 +366,7 @@ docker compose up -d     # 首次拉取镜像约 1-2GB
 - 在任务页「⏰ 计划任务」卡片里添加（名称 / 时间 / 星期 / 任务），复制卡片给出的命令：
 
 ```bash
-curl -s "http://你的面板地址/index.php?scheduler=1&key=自动生成的key" >/dev/null 2>&1
+curl -s "http://你的面板地址/action?scheduler=1&key=自动生成的key" >/dev/null 2>&1
 ```
 
 - 宿主机添加时任务类型选 **Shell 脚本**、执行周期选 **每分钟**。
@@ -396,7 +396,7 @@ curl -s "http://你的面板地址/index.php?scheduler=1&key=自动生成的key"
 ### 自动更新与更新源
 
 - 面板默认「自动检查」模式：打开面板静默检查最新 Release，发现新版本顶部弹提醒条，一键更新（更新前自动备份到 `backups/`，出问题在「版本备份 / 回滚」卡片退回）；可切换为「手动更新」，也可「忽略此版本」。
-- **v1.20 起一键更新为 ZIP 整包自更新**：下载 Release 资产 `V+版本号.zip`（整个项目的发布包），校验包结构与版本号后整体换入，完成约 2 秒后面板自动重启生效；下载失败或校验不过自动回滚，旧版 index.php 更新流程仍然兼容。
+- **v1.20 起一键更新为 ZIP 整包自更新**：下载 Release 资产 `V+版本号.zip`（整个项目的发布包），校验包结构与版本号后整体换入，完成约 2 秒后面板自动重启生效；下载失败或校验不过自动回滚，旧版单文件更新流程仍然兼容。
 - 更新源通过环境变量配置：
 
 | 环境变量 | 说明 | 示例 |
@@ -413,7 +413,7 @@ curl -s "http://你的面板地址/index.php?scheduler=1&key=自动生成的key"
 
 ### 版本备份 / 一键回滚
 
-- 每次更新前自动把当前版本备份到 `backups/`（v1.20 起为 `panel_*.zip` 整包快照，旧版为 `index_*.php` 单文件；文件名含版本号 + 备份时间），合计只保留最近 5 份
+- 每次更新前自动把当前版本备份到 `backups/`（`panel_*.zip` 整包快照，文件名含版本号 + 备份时间），合计只保留最近 5 份
 - 概览页「版本备份 / 回滚」卡片一键回滚，回滚前会把当前版本再备份一次，点错了也能救回来
 - 回滚接口需登录 + CSRF 校验，服务端只接受 `backups/` 目录内符合命名规则的文件
 
@@ -433,8 +433,8 @@ curl -s "http://你的面板地址/index.php?scheduler=1&key=自动生成的key"
 | `M7A_LISTEN_PORT` | 监听端口 | 1–65535 | `8787` |
 | `M7A_PANEL_VERSION` | 面板版本号（页面显示） | 语义化版本字符串 | `1.20` |
 | `M7A_UPDATE_HOST` / `M7A_UPDATE_OWNER` / `M7A_UPDATE_REPO` | 自更新来源仓库 | URL / 仓库名 | `https://github.com` / `starchaser-cyber` / `march7th-assistant-web-management-panel-python-remake` |
-| `M7A_PHP_UPSTREAM` | 未迁移请求回源地址（与旧版共存时使用） | URL | `http://127.0.0.1:9999` |
-| `M7A_SESSION_DIR` | 登录态共享目录（与 PHP 版面板互通） | 目录路径 | `/tmp` |
+| `M7A_PHP_UPSTREAM` | 旧版回源地址（与旧版共存时使用） | URL | `http://127.0.0.1:9999` |
+| `M7A_SESSION_DIR` | 登录态共享目录（与旧版面板互通） | 目录路径 | `/tmp` |
 | `M7A_PREVIEW_UP_PORT` | 预览帧源端口（容器内） | 1–65535 | `9223` |
 | `M7A_PREVIEW_SECRET` | 预览令牌文件路径 | 文件路径 | `{小助手目录}/logs/preview_secret` |
 | `M7A_PREVIEW_SCRIPT` | 容器内预览组件路径 | 路径 | `/m7a/logs/preview_server.py` |
@@ -467,12 +467,7 @@ journalctl -u m7a-panel -f      # 实时查看面板日志
 ├── CHANGELOG.md                   # 更新日志
 ├── .gitignore                     # 忽略敏感文件与运行时产物
 ├── assets/                        # README 截图
-├── docs/                          # 项目文档
-│   ├── DEPLOY_PYTHON.md           #   部署与退役手册（含 Nginx/systemd 配置）
-│   ├── ACCEPTANCE.md              #   上线验收清单
-│   ├── TEST_REPORT.md             #   测试报告
-│   ├── MIGRATION_NOTES.md         #   PHP → Python 实现说明
-│   └── migration_api_inventory.md #   新旧接口对照清单
+├── docs/                          # 项目开发档案（不随发布包分发）
 └── panel_migr/                    # Python 面板工程本体
     ├── main.py                    #   入口：启动 Uvicorn 服务
     ├── config.py                  #   公共配置，环境变量在此读取
@@ -495,7 +490,7 @@ journalctl -u m7a-panel -f      # 实时查看面板日志
     ├── templates/panel.html.j2    #   Jinja2 页面模板
     ├── static/                    #   前端 CSS / JS
     ├── scripts/                   #   辅助脚本
-    └── tests/                     #   pytest 测试（158 用例）
+    └── tests/                     #   pytest 测试（166 用例）
 ```
 
 > `.panel_pass.php`、`.env`、`data/`、`sessions/`、`backups/`、`*.log` 等运行时与敏感文件已被 `.gitignore` 排除，不会进入版本库。
@@ -523,7 +518,7 @@ python3 -m venv .venv
 
 **4. 登录后立即被弹回登录页？**
 
-多为登录态不互通。确认 `M7A_SESSION_DIR` 指向的目录与 PHP 面板 `session.save_path` 一致（默认 `/tmp`）；若面板以不同系统用户运行，检查该目录的读写权限。
+多为登录态不互通。确认 `M7A_SESSION_DIR` 指向的目录与旧版面板 `session.save_path` 一致（默认 `/tmp`）；若面板以不同系统用户运行，检查该目录的读写权限。
 
 **5. 页面能开但数据不刷新 / WebSocket 连不上？**
 
@@ -553,7 +548,7 @@ Python 版写监控文件采用原子写，正常使用不会再损坏；若检�
 
 **10. 测试出现少量 `skipped` 正常吗？**
 
-正常。当前回归结果为 `158 passed, 3 skipped`，skipped 用例依赖特定环境（如 ffmpeg / 容器），环境不具备时自动跳过，不影响功能。
+正常。当前回归结果为 `166 passed, 3 skipped`，skipped 用例依赖特定环境（如 ffmpeg / 容器），环境不具备时自动跳过，不影响功能。
 
 ### 附：小助手与面板速查表
 
@@ -627,14 +622,15 @@ python3 -m venv .venv
 
 ## 更新日志（Changelog）
 
-### v1.20.0-python（2026-10-03）
+### V1.20（2026-10-03）
 
 **一句话总结**：监控算法重写根治 CPU 超 100%、H.264 新增 15/30 帧档位、一键更新升级为 ZIP 整包自更新。
 
 ✨ **新增**
 
 - H.264 极致档新增 **15 / 30 帧两档输出帧率**，预览面板可随时切档：30 帧更流畅、15 帧更省流（受上游帧源能力限制仅提供这两档）
-- 「一键更新」升级为 **ZIP 整包自更新**：下载 Release 的 `V+版本号.zip` 发布包，校验包结构与版本号后整体换入，出错自动回滚，完成约 2 秒后面板自动重启生效；旧版 index.php 更新流程仍兼容
+- 「一键更新」升级为 **ZIP 整包自更新**：下载 Release 的 `V+版本号.zip` 发布包，校验包结构与版本号后整体换入，出错自动回滚，完成约 2 秒后面板自动重启生效；旧版单文件更新流程仍兼容
+- 写操作端点统一为中性路径 **`/action`**，旧地址继续兼容，老页面与既有定时任务不受影响
 
 ⚡ **优化**
 
@@ -651,12 +647,13 @@ python3 -m venv .venv
 📝 **文档**
 
 - 实时预览介绍合并为一处、消除重复介绍；补充 15/30 帧档位说明与 v1.20 更新日志
+- 面板用户可见文案全面中性化：备份、回滚、密码、更新源等提示不再出现历史文件名；发布包剔除历史迁移档案
 
 ### v1.19.0-python（2026-10-02）
 
 **新增功能**
 
-- Python/FastAPI 重制版首次公开发布，功能与原 PHP 版 v1.19 对齐
+- Python/FastAPI 版首次公开发布，功能与 v1.19 全量特性对齐
 - WebSocket 事件流、秒级资源监控、异常主动告警与游戏画面实时预览
 - systemd 常驻与自动重启部署方式
 - 登录限速、会话轮换、预览按日令牌与触发接口 key 校验
@@ -671,7 +668,7 @@ python3 -m venv .venv
 
 - 保留原面板全部页面与操作习惯，数据文件与登录态直接复用，切换零迁移
 
-> 更早版本（v1.0 ~ v1.19，PHP 版）的完整更新记录见 [原仓库 README](https://github.com/Starchaser-Cyber/march7th-assistant-web-management-panel)；本仓库完整变更记录见 [`CHANGELOG.md`](CHANGELOG.md)。
+> 更早版本（v1.0 ~ v1.19）的完整更新记录见 [历史仓库 README](https://github.com/Starchaser-Cyber/march7th-assistant-web-management-panel)；本仓库完整变更记录见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ## 开源许可证
 
@@ -683,7 +680,7 @@ python3 -m venv .venv
 
 **特别鸣谢**
 
-- 原版 PHP 面板 [`march7th-assistant-web-management-panel`](https://github.com/Starchaser-Cyber/march7th-assistant-web-management-panel) 及其设计思路
+- 早期面板 [`march7th-assistant-web-management-panel`](https://github.com/Starchaser-Cyber/march7th-assistant-web-management-panel) 及其设计思路
 - [三月七小助手 March7thAssistant](https://github.com/moesnow/March7thAssistant) 原项目
 - [FastAPI](https://fastapi.tiangolo.com/)、[Uvicorn](https://www.uvicorn.org/)、[Jinja2](https://jinja.palletsprojects.com/)、[httpx](https://www.python-httpx.org/)、[bcrypt](https://github.com/pyca/bcrypt) 等开源依赖
 - 所有提交 Issue、建议与 PR 的贡献者

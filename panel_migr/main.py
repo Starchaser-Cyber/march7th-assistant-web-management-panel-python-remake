@@ -48,7 +48,7 @@ async def _m4_stop_runner() -> None:
 
 # 这些 path_info 不做 WebSocket 代理（M3 再统一梳理）
 _WS_EXCLUDED = {"phpmyadmin", "adminer", "favicon.ico", "robots.txt"}
-_PANEL_PATHS = ("", "/", "/index.php")
+_PANEL_PATHS = ("", "/", "/action", "/index.php")
 
 
 async def _run_handler(request: Request, handler) -> Response:

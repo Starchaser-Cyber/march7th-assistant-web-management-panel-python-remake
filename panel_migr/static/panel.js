@@ -177,7 +177,7 @@ function doUpdate() {
   fd.append('action', 'do_update');
   var csrf = document.querySelector('input[name="csrf"]');
   if (csrf) fd.append('csrf', csrf.value);
-  fetch('index.php', { method:'POST', body: fd })
+  fetch('action', { method:'POST', body: fd })
     .then(function(r){ return r.json(); })
     .then(function(d){
       if (d && d.ok) {
@@ -241,7 +241,7 @@ function updateAssistantImage() {
   fd.append('action', 'update_image');
   var csrf = document.querySelector('input[name="csrf"]');
   if (csrf) fd.append('csrf', csrf.value);
-  fetch('index.php', { method:'POST', body: fd })
+  fetch('action', { method:'POST', body: fd })
     .then(function(r){ return r.json(); })
     .then(function(d){
       if (d && d.ok) {
@@ -280,7 +280,7 @@ function setUpdateMode(mode) {
   fd.append('mode', mode);
   var csrf = document.querySelector('input[name="csrf"]');
   if (csrf) fd.append('csrf', csrf.value);
-  fetch('index.php', { method:'POST', body: fd })
+  fetch('action', { method:'POST', body: fd })
     .then(function(r){ return r.json(); })
     .then(function(d){
       if (d && d.ok) {
@@ -298,7 +298,7 @@ function setAfterFinish(v) {
   fd.append('value', v);
   var csrf = document.querySelector('input[name="csrf"]');
   if (csrf) fd.append('csrf', csrf.value);
-  fetch('index.php', { method:'POST', body: fd })
+  fetch('action', { method:'POST', body: fd })
     .then(function(r){ return r.json(); })
     .then(function(d){
       if (d && d.ok) {
@@ -327,7 +327,7 @@ function rollbackPanel(file) {
   fd.append('file', file);
   var csrf = document.querySelector('input[name="csrf"]');
   if (csrf) fd.append('csrf', csrf.value);
-  fetch('index.php', { method:'POST', body: fd })
+  fetch('action', { method:'POST', body: fd })
     .then(function(r){ return r.json(); })
     .then(function(d){
       if (d && d.ok) {
@@ -379,7 +379,7 @@ function clearHistory() {
   fd.append('action', 'history_clear');
   var csrf = document.querySelector('input[name="csrf"]');
   if (csrf) fd.append('csrf', csrf.value);
-  fetch('index.php', { method:'POST', body: fd })
+  fetch('action', { method:'POST', body: fd })
     .then(function(r){ return r.json(); })
     .then(function(d){
       if (d && d.ok) {
@@ -558,7 +558,7 @@ function setMonitorInterval(iv) {
   fd.append('interval', iv);
   var csrf = document.querySelector('input[name="csrf"]');
   if (csrf) fd.append('csrf', csrf.value);
-  fetch('index.php', { method:'POST', body: fd })
+  fetch('action', { method:'POST', body: fd })
     .then(function(r){ return r.json(); })
     .then(function(d){
       if (d && d.ok) {
@@ -728,7 +728,7 @@ function fabAct(act) {
 function submitPanelAction(action) {
   var csrf = document.querySelector('input[name="csrf"]');
   var f = document.createElement('form');
-  f.method = 'POST'; f.action = 'index.php'; f.style.display = 'none';
+  f.method = 'POST'; f.action = 'action'; f.style.display = 'none';
   if (csrf) {
     var c = document.createElement('input');
     c.type = 'hidden'; c.name = 'csrf'; c.value = csrf.value; f.appendChild(c);
@@ -1112,7 +1112,7 @@ function saveAlert() {
   fd.append('alert_target', document.getElementById('alertTarget').value.trim());
   var csrf = document.querySelector('input[name="csrf"]');
   if (csrf) fd.append('csrf', csrf.value);
-  fetch('index.php', { method: 'POST', body: fd }).then(function(r) { return r.json(); }).then(function(d) {
+  fetch('action', { method: 'POST', body: fd }).then(function(r) { return r.json(); }).then(function(d) {
     if (btn) btn.textContent = '💾 保存设置';
     var badge = document.getElementById('alertBadge');
     if (badge && d && d.ok) badge.textContent = d.enable ? '已开启' : '未开启';
@@ -1131,7 +1131,7 @@ function testAlert() {
   fd.append('alert_target', document.getElementById('alertTarget').value.trim());
   var csrf = document.querySelector('input[name="csrf"]');
   if (csrf) fd.append('csrf', csrf.value);
-  fetch('index.php', { method: 'POST', body: fd }).then(function(r) { return r.json(); }).then(function(d) {
+  fetch('action', { method: 'POST', body: fd }).then(function(r) { return r.json(); }).then(function(d) {
     if (btn) btn.textContent = '📤 发送测试';
     miniToast(d && d.ok ? '测试消息已发出，去手机上看一眼' : ('发送失败：' + (d && d.msg ? d.msg : '请检查配置')));
   }).catch(function() {

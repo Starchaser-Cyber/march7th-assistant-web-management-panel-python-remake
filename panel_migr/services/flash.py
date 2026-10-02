@@ -78,7 +78,7 @@ def fallback_page(msg=None, err=None) -> str:
     """取不到 PHP 页面时的降级：横幅 + 2 秒后自动回面板页。"""
     return (
         "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">"
-        "<meta http-equiv=\"refresh\" content=\"2;url=./index.php\">"
+        "<meta http-equiv=\"refresh\" content=\"2;url=./\">"
         "<title>M7A</title></head><body>"
         + _banner(msg, err)
         + "</body></html>"

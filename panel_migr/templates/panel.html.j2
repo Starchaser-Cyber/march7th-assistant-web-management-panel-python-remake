@@ -45,7 +45,7 @@
       <button type="submit" class="btn primary">登录</button>
     </form>
     {% endif %}
-    <div class="tip">密码仅保存在面板目录的 .panel_pass.php 文件中</div>
+    <div class="tip">密码仅保存在面板目录的本地文件中，不会上传到任何第三方</div>
   </div>
 </div>
 
@@ -286,7 +286,7 @@
           <span class="badge" style="background:var(--primary-soft);color:var(--primary);">保留最近 {{ (BACKUP_KEEP)|int }} 份</span>
         </h2>
         {% if  not bkList %}
-        <p class="tip" style="margin:0;">暂无备份。面板「一键更新」执行前会自动把当前版本备份到 <code>backups/</code> 目录（v1.20 起为 <code>panel_*.zip</code> 整包备份，旧版为 <code>index_*.php</code> 单文件），更新出问题时可从这里一键回滚。</p>
+        <p class="tip" style="margin:0;">暂无备份。面板「一键更新」执行前会自动把当前版本整体备份到 <code>backups/</code> 目录（<code>panel_版本_时间.zip</code> 整包快照），更新出问题时可从这里一键回滚。</p>
         {% else %}
         <div class="hist-table-wrap">
           <table class="hist-table">
@@ -304,7 +304,7 @@
           </table>
         </div>
         {% endif %}
-        <p class="tip" style="margin:10px 0 0;">回滚会把面板 <code>index.php</code> 恢复为所选备份；回滚前会先把当前版本也备份一次（防手滑），回滚完成后请刷新页面确认版本号。</p>
+        <p class="tip" style="margin:10px 0 0;">回滚会把面板恢复为所选备份；回滚前会先把当前版本也备份一次（防手滑），回滚完成后请刷新页面确认版本号。</p>
       </div>
 
       <div class="card">

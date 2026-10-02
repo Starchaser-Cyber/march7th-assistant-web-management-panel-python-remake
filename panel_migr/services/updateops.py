@@ -854,7 +854,7 @@ def backup_rollback(file: str) -> dict:
     try:
         INDEX_FILE.write_text(content, "utf-8")
     except OSError:
-        return {"ok": False, "msg": "写入 index.php 失败，请检查面板目录权限"}
+        return {"ok": False, "msg": "写入面板主文件失败，请检查面板目录权限"}
     tail = f"（回滚前的版本已备份为 {Path(safety).name}）" if safety else ""
     return {"ok": True, "msg": f"已回滚到备份 {base}{tail}，页面即将刷新", "file": base}
 
