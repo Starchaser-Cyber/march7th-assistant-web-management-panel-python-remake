@@ -41,11 +41,14 @@ def new_session(authed=True):
     return {"PHPSESSID": sid}
 
 
-def post(action, data=None, cookies=None):
+def post(action, data=None, cookies=None, follow=False):
     payload = {"action": action, "csrf": TOKEN}
     payload.update(data or {})
-    return client.post("/", data=payload, cookies=cookies or new_session(),
-                       follow_redirects=False)
+    ck = cookies or new_session()
+    r = client.post("/", data=payload, cookies=ck, follow_redirects=False)
+    if follow and r.status_code in (301, 302, 303, 307, 308):
+        r = client.get(r.headers["location"], cookies=ck)
+    return r
 
 
 def _resp_sid(resp) -> str:
@@ -88,7 +91,7 @@ def test_login_failure_does_not_rotate(monkeypatch):
     monkeypatch.setattr(passwd, "check_pass", lambda pw: False)
     cookies = new_session(authed=True)
     old = cookies["PHPSESSID"]
-    r = post("login", {"pass": "x"}, cookies)
+    r = post("login", {"pass": "x"}, cookies, follow=True)
     assert r.status_code == 200
     assert _resp_sid(r) == ""
     assert "m7a_panel_auth" in _sess_text(old)
@@ -120,7 +123,8 @@ def test_login_rate_limited_after_5_fails(monkeypatch):
     _fail_login(5)
     # 锁定后即使密码正确也拒绝
     monkeypatch.setattr(passwd, "check_pass", lambda pw: True)
-    r = post("login", {"pass": "right"}, new_session(authed=False))
+    r = post("login", {"pass": "right"}, new_session(authed=False),
+             follow=True)
     assert r.status_code == 200
     assert "尝试过于频繁" in r.text
 

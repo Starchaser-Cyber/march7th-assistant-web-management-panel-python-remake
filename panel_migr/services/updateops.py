@@ -370,22 +370,52 @@ def _backup_panel_zip(version: str = "") -> str:
 
 def _swap_stage(stage: Path, old: Path) -> None:
     """stage 内一级条目换入面板目录；被替换的条目移入 old 供失败回滚。
-    data/ backups/ 等运行数据永不触碰。"""
+    data/ backups/ 等运行数据永不触碰。
+    v1.21.1：现有 .venv 运行环境先摘出暂存、换入后放回——此前它随旧目录进入
+    old 会被回滚清理一并删掉，导致面板进程起不来（203/EXEC 循环）。"""
     old.mkdir(parents=True, exist_ok=True)
+    venv_kept: list[Path] = []
     for item in sorted(stage.iterdir()):
         if item.name in _PROTECT_TOP or item.name.startswith("."):
             continue
         dest = cfg.BASE_DIR / item.name
+        stash = None
+        src_venv = dest / ".venv"
+        if dest.is_dir() and src_venv.is_dir():
+            stash = old / f".venv_stash_{item.name}"
+            if stash.exists():
+                shutil.rmtree(stash, ignore_errors=True)
+            shutil.move(str(src_venv), str(stash))
         if dest.exists():
             shutil.move(str(dest), str(old / item.name))
         shutil.move(str(item), str(dest))
+        if stash is not None and stash.exists():
+            shutil.move(str(stash), str(dest / ".venv"))
+            venv_kept.append(dest)
+    for d in venv_kept:
+        _venv_pip_sync(d)
+
+
+def _venv_pip_sync(dest: Path) -> None:
+    """复用现有 .venv 时按新 requirements.txt 对齐依赖（已装齐则秒回，失败不影响更新）。"""
+    pip = dest / ".venv" / "bin" / "pip"
+    req = dest / "requirements.txt"
+    if not (pip.is_file() and req.is_file()):
+        return
+    try:
+        run_cmd(f'"{pip}" install -q -r "{req}"', timeout=180)
+    except Exception:
+        pass
 
 
 def _restore_old(old: Path) -> None:
     """回滚：把 old 里的原条目移回面板目录（覆盖换入失败的新条目）。"""
     if not old.is_dir():
         return
-    for item in sorted(old.iterdir()):
+    items = sorted(old.iterdir())
+    for item in items:
+        if item.name.startswith(".venv_stash_"):
+            continue
         dest = cfg.BASE_DIR / item.name
         try:
             if dest.exists():
@@ -394,6 +424,20 @@ def _restore_old(old: Path) -> None:
                 else:
                     dest.unlink()
             shutil.move(str(item), str(dest))
+        except OSError:
+            pass
+    # v1.21.1：普通条目恢复完后，把暂存的 .venv 放回对应目录（回滚后运行环境不丢）
+    for item in items:
+        if not item.name.startswith(".venv_stash_"):
+            continue
+        base_name = item.name[len(".venv_stash_"):]
+        target = cfg.BASE_DIR / base_name
+        try:
+            if not target.exists():
+                target.mkdir(parents=True, exist_ok=True)
+            venv_dst = target / ".venv"
+            if not venv_dst.exists() and item.exists():
+                shutil.move(str(item), str(venv_dst))
         except OSError:
             pass
 

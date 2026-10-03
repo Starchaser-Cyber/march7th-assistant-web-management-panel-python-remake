@@ -41,11 +41,14 @@ def new_session(authed=True):
     return {"PHPSESSID": sid}
 
 
-def post(action, data=None):
+def post(action, data=None, follow=True):
     payload = {"action": action, "csrf": TOKEN}
     payload.update(data or {})
-    return client.post("/", data=payload, cookies=new_session(),
-                       follow_redirects=False)
+    ck = new_session()
+    r = client.post("/", data=payload, cookies=ck, follow_redirects=False)
+    if follow and r.status_code in (301, 302, 303, 307, 308):
+        r = client.get(r.headers["location"], cookies=ck)
+    return r
 
 
 # ---------- A. 链式启动 ensure_running ----------
@@ -209,4 +212,4 @@ def test_monitor_read_applies_normalize(tmp_path, monkeypatch):
 # ---------- D. 版本 ----------
 
 def test_panel_version_is_121():
-    assert cfg.PANEL_VERSION == "1.21"
+    assert cfg.PANEL_VERSION == "1.21.1"

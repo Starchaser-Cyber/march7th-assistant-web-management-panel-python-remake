@@ -19,7 +19,7 @@ from jinja2 import Environment, FileSystemLoader, Undefined
 from markupsafe import Markup
 
 import config as cfg
-from phpsess import is_auth, new_sid, session_id, session_set, sid_valid
+from phpsess import is_auth, new_sid, session_id, session_remove, session_set, sid_valid
 from services.configops import config_read_raw, notify_check_html, yaml_read_simple
 from services.containers import container_status
 from services.history import history_sync, history_today_stats, history_view
@@ -241,6 +241,19 @@ def render_page(request, *, msg=None, err=None, notify_check=None) -> str:
         sid = new_sid()
         request.state.new_sid = sid
     authed = is_auth(session)
+    # v1.21.1：消费 PRG（303 跳回）暂存的一次性消息——渲染一次即从会话移除
+    bag_raw = session.pop("_flash", None)
+    if isinstance(bag_raw, str) and bag_raw:
+        session_remove(sid, "_flash")
+        try:
+            _bag = json.loads(bag_raw)
+            msg = msg or _bag.get("msg") or ""
+            err = err or _bag.get("err") or ""
+            if notify_check is None and _bag.get("notify_check") is not None:
+                notify_check = _bag.get("notify_check")
+        except Exception:
+            pass
+
     ctx: dict = {
         "isAuth": authed,
         "needSetup": not cfg.PASS_FILE.is_file(),

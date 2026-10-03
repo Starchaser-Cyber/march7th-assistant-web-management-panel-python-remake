@@ -45,11 +45,21 @@ def new_session(authed=True):
     return {"PHPSESSID": sid}
 
 
-def post(action, data=None, cookies=None):
+def _hop(r, cookies):
+    """手动跟随 3xx（TestClient 自动跟随时会丢 per-request cookies）。"""
+    if r.status_code in (301, 302, 303, 307, 308) and r.headers.get("location"):
+        return client.get(r.headers["location"], cookies=cookies or {})
+    return r
+
+
+def post(action, data=None, cookies=None, follow=True):
+    # v1.21.1：表单提交走 PRG（303→GET），默认手动跟随回到消息页；
+    # 断言 302 的用例传 follow=False 取中间响应。
     payload = {"action": action, "csrf": TOKEN}
     payload.update(data or {})
-    return client.post("/", data=payload, cookies=cookies or new_session(),
-                       follow_redirects=False)
+    ck = cookies or new_session()
+    r = client.post("/", data=payload, cookies=ck, follow_redirects=False)
+    return _hop(r, ck) if follow else r
 
 
 def session_text(cookies) -> str:
@@ -97,7 +107,8 @@ def test_setup_pass_ok(monkeypatch):
     called = {}
     monkeypatch.setattr(passwd, "set_pass", lambda pw: called.update(pw=pw) or True)
     cookies = new_session(authed=False)
-    r = post("setup_pass", {"pass1": "secret6", "pass2": "secret6"}, cookies)
+    r = post("setup_pass", {"pass1": "secret6", "pass2": "secret6"}, cookies,
+            follow=False)
     assert r.status_code == 302
     assert called["pw"] == "secret6"
     # M5 轮换：设置成功后登录态写入新 sid（响应 Set-Cookie），旧 sid 注销
@@ -123,7 +134,7 @@ def test_login_ok(monkeypatch):
     monkeypatch.setattr(passwd, "check_pass", lambda pw: pw == "right")
     cookies = new_session(authed=True)                 # 旧会话已有登录态
     old_sid = cookies["PHPSESSID"]
-    r = post("login", {"pass": "right"}, cookies)
+    r = post("login", {"pass": "right"}, cookies, follow=False)
     assert r.status_code == 302
     # M5 轮换：登录成功总是换新 sid（会话固定防御），旧会话被注销
     from http.cookies import SimpleCookie
@@ -140,7 +151,7 @@ def test_login_ok(monkeypatch):
 
 def test_logout_clears_session():
     cookies = new_session(authed=True)
-    r = post("logout", {}, cookies)
+    r = post("logout", {}, cookies, follow=False)
     assert r.status_code == 302
     assert "m7a_panel_auth" not in session_text(cookies)
 
@@ -204,10 +215,12 @@ def test_csrf_missing_and_invalid():
     cookies = new_session()
     r1 = client.post("/", data={"action": "restart"}, cookies=cookies,
                      follow_redirects=False)
-    assert "请求验证失败" in r1.text
+    assert r1.status_code == 303
+    assert "请求验证失败" in _hop(r1, cookies).text
     r2 = client.post("/", data={"action": "restart", "csrf": "wrong"},
                      cookies=cookies, follow_redirects=False)
-    assert "请求验证失败" in r2.text
+    assert r2.status_code == 303
+    assert "请求验证失败" in _hop(r2, cookies).text
 
 
 def test_dangerous_action_alerts_quiet(monkeypatch):
@@ -242,8 +255,10 @@ def test_unknown_action_forwards():
 
 def test_restore_config_bad_ext():
     files = {"cfg_file": ("x.txt", b"hello world: 12345", "text/plain")}
+    ck = new_session()
     r = client.post("/", data={"action": "restore_config", "csrf": TOKEN},
-                    files=files, cookies=new_session(), follow_redirects=False)
+                    files=files, cookies=ck, follow_redirects=False)
+    r = _hop(r, ck)
     assert "文件格式错误" in r.text
 
 
@@ -255,9 +270,11 @@ def test_restore_config_ok(monkeypatch):
     import routers.write as W
     monkeypatch.setattr(W, "config_backup", lambda inst: "/no/backup")
     files = {"cfg_file": ("good.yaml", b"locales:\n  zh_CN: x\n", "text/plain")}
+    ck = new_session()
     r = client.post("/", data={"action": "restore_config", "csrf": TOKEN},
-                    files=files, cookies=new_session(), follow_redirects=False)
-    assert "配置已恢复" in r.text
+                    files=files, cookies=ck, follow_redirects=False)
+    assert r.status_code == 303
+    assert "配置已恢复" in _hop(r, ck).text
     assert (INST_DIR / "config.yaml").read_text(encoding="utf-8") == "locales:\n  zh_CN: x\n"
 
 

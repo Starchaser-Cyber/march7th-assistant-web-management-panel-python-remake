@@ -32,9 +32,12 @@ def _parse_value(s: str, i: int):
         return None, i + 2
     if s.startswith("s:", i):
         len_end = s.index(":", i + 2)      # s:<len>:  的第二个冒号
-        ln = int(s[i + 2:len_end])
+        ln = int(s[i + 2:len_end])          # ln 是 UTF-8 字节长度（php 语义）
         start = len_end + 2                # 跳过  `:"`
-        return s[start:start + ln], start + ln + 2   # 跳过尾部 `";`
+        # 按字节取值再解码；此前直接按字符数切，含中文时会把尾部 `";`
+        # 一并吞进 value（序列化按字节计数、解析按字符），v1.21.1 修正
+        val = s[start:].encode("utf-8")[:ln].decode("utf-8", errors="replace")
+        return val, start + len(val) + 2   # 跳过尾部 `";`
     if s.startswith("a:", i):
         brace = s.index("{", i)
         n = int(s[i + 2:brace - 1])       # a:<len>:{  的第二个冒号前结束

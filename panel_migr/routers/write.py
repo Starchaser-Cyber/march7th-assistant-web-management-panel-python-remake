@@ -8,8 +8,10 @@
 """
 from __future__ import annotations
 
+import json
 import random
 import re
+import time
 from hmac import compare_digest as _hash_equals
 from pathlib import Path
 
@@ -84,7 +86,21 @@ async def render(request, result) -> Response:
                             httponly=True, samesite="lax")
         return resp
     if kind == "flash":
-        return await flash(request, **data)
+        # v1.21.1：POST-Redirect-GET。表单提交后 303 跳回 GET /，一次性消息经 session 携带；
+        # 此前直接返回 200 整页，地址栏停在 POST 响应上，浏览器刷新会原样重放提交
+        # （表现为每次刷新都重复触发一次任务），PRG 后刷新只是普通 GET。
+        msg = data.get("msg") or ""
+        err = data.get("err") or ""
+        nchk = data.get("notify_check")
+        if msg or err or nchk:
+            bag = json.dumps({"msg": msg, "err": err, "notify_check": nchk},
+                             ensure_ascii=False, default=str)
+            sid0 = session_id(request)
+            request.state.session["_flash"] = bag
+            if not session_set(sid0, "_flash", bag):
+                # 消息带不走（会话写失败）→ 退回整页渲染，保证错误仍可见
+                return await flash(request, **data)
+        return RedirectResponse("/", 303)
     return data
 
 
@@ -612,6 +628,10 @@ POST_HANDLERS = {
 }
 
 
+_TASK_COOLDOWN: dict[str, float] = {}
+TASK_COOLDOWN_SECONDS = 15.0
+
+
 async def handle_post(request) -> Response:
     """POST 统一入口：W1 前置（认证 / CSRF / 危险操作静默）+ action 分发。"""
     # 先缓存 body：form 解析会消耗请求流，未迁移 action 转发时还要复用
@@ -635,6 +655,21 @@ async def handle_post(request) -> Response:
         return await _forward_unauth_page(request)
     if not csrf_check(form, session):
         return await render(request, F(err="请求验证失败，请重试"))
+
+    # v1.21.1：任务类 action 短窗口幂等——刷新重放/连点 15 秒内同会话同任务只执行一次
+    if action in cfg.TASKS:
+        now = time.monotonic()
+        tkey = f"{sid}|{action}"
+        prev = _TASK_COOLDOWN.get(tkey)
+        if prev is not None and now - prev < TASK_COOLDOWN_SECONDS:
+            return await render(
+                request,
+                F(msg=f"任务「{cfg.TASKS[action]}」刚刚已启动，重复提交已忽略"))
+        _TASK_COOLDOWN[tkey] = now
+        if len(_TASK_COOLDOWN) > 256:
+            for k in [k for k, v in _TASK_COOLDOWN.items()
+                      if now - v >= TASK_COOLDOWN_SECONDS]:
+                _TASK_COOLDOWN.pop(k, None)
 
     # v1.18：用户主动容器操作 → 告警静默 10 分钟
     if action in cfg.DANGEROUS_ACTIONS:

@@ -178,7 +178,10 @@ def test_post_forwards():
 def test_post_login_handled_by_python():
     """M2 起 login 由 Python 处理：错密码 → 整页重渲染 + 横幅。"""
     RECEIVED.clear()
-    r = client.post("/", data={"action": "login", "pass": "x"}, cookies=AUTH_COOKIE)
+    r = client.post("/", data={"action": "login", "pass": "x"},
+                    cookies=AUTH_COOKIE, follow_redirects=False)
+    assert r.status_code == 303
+    r = client.get(r.headers["location"], cookies=AUTH_COOKIE)
     assert r.status_code == 200
     assert "密码错误" in r.text
     assert "<!-- ===== 概览 ===== -->" in r.text  # 已登录会话 → Python 渲染面板页+横幅

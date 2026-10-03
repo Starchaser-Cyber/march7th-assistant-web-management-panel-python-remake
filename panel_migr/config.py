@@ -24,7 +24,7 @@ HISTORY_KEEP = 200               # 历史最多保留条数
 SCHEDULE_WINDOW_SECONDS = 1800   # 计划任务补跑窗口（M2+）
 
 # ===== 面板自身更新（与 index.php define() 对齐，M4 可用环境变量覆盖）=====
-PANEL_VERSION = os.environ.get("M7A_PANEL_VERSION", "1.21")
+PANEL_VERSION = os.environ.get("M7A_PANEL_VERSION", "1.21.1")
 UPDATE_ENABLED = True
 UPDATE_TYPE = "github"           # gitea / github
 UPDATE_HOST = os.environ.get("M7A_UPDATE_HOST", "https://github.com")

@@ -4,7 +4,7 @@
 
 ![许可证](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Python 版本](https://img.shields.io/badge/python-3.11%2B-green)
-![最新版本](https://img.shields.io/badge/version-V1.21-orange)
+![最新版本](https://img.shields.io/badge/version-V1.21.1-orange)
 ![构建状态](https://img.shields.io/badge/build-140%20tests%20passing-brightgreen)
 ![Stars](https://img.shields.io/github/stars/Starchaser-Cyber/march7th-assistant-web-management-panel-python-remake?style=flat)
 
@@ -622,6 +622,19 @@ python3 -m venv .venv
 再次感谢每一位贡献者的审阅与建议！
 
 ## 更新日志（Changelog）
+
+### V1.21.1（2026-10-03）
+
+**一句话总结**：修复刷新页面重复触发任务、一键更新删掉运行环境两个线上问题。
+
+🐛 修复
+
+- 刷新网页不再自动触发任务运行：所有表单与任务按钮提交后改为自动跳回页面，地址栏不会再停在提交结果页，按 F5 只是普通刷新，不会把上一次任务再执行一遍；任务类操作另加 15 秒防重复窗口，提交即便被意外重放也会提示「重复提交已忽略」
+- 一键更新不再删掉运行环境（更新后面板打不开的元凶）：换入新版前先把现有 Python 运行环境安全摘出、换入后原样放回，更新失败回滚时也对称恢复，换入完成后按新依赖清单自动对齐依赖；已因旧缺陷打不开的服务器，重建一次运行环境即可恢复
+
+📝 其他
+
+- 版本号升级 1.21.1，自动化测试增至 188 项
 
 ### V1.21（2026-10-03）
 
