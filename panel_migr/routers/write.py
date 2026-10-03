@@ -29,7 +29,7 @@ from services.configops import (
     yaml_read_simple,
     h,
 )
-from services.containers import compose, container_is_running, task_start
+from services.containers import compose, container_is_running, ensure_running, task_start
 from services.flash import flash
 from services.history import history_add, history_write
 from services.instances import (
@@ -270,9 +270,14 @@ def h_instance_delete(request, form, session, sid):
 def _task_action(request, form, session, sid, key: str):
     label = cfg.TASKS[key]
     inst = instance_current(session)
+    ck = ensure_running(inst)                      # v1.21：小助手没跑先自动拉起再执行任务
+    if ck.get("err"):
+        return F(err=ck["err"])
     r = task_start(inst, key)
     if r["code"] == 0:
         history_add(inst, key, label)
+        if ck.get("started"):
+            return F(msg=f"小助手已自动启动，任务「{label}」已后台开始")
         return F(msg=f"任务「{label}」已后台启动")
     return F(msg="任务启动失败：" + r["out"])
 

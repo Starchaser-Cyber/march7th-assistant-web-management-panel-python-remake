@@ -41,7 +41,7 @@ def _empty() -> dict:
     return {
         "points": [], "minutes": [],
         "meta": {"host": None, "hostTs": 0, "lastSample": 0, "lastMin": 0, "lastNet": None,
-                 "sanitized": 0, "cpuBase": None},
+                 "sanitized": 0, "cpuBase": None, "cpuNorm": 0},
     }
 
 
@@ -56,6 +56,29 @@ def _sanitize_cpu(d: dict) -> None:
     d["points"] = [p for p in pts if abs(float(p.get("cpu") or 0)) <= cap]
     d["minutes"] = [m for m in mins if abs(float(m.get("cpu") or 0)) <= cap]
     d["meta"]["sanitized"] = 1
+
+
+def cpu_norm_percent(du: float, dw_us: float, cores: int) -> float:
+    """v1.21：CPU 时间差分 → 占整机算力百分比，钳 [0,100]。
+    du=CPU 时间差分（µs），dw_us=墙钟差（µs），cores=整机核数。"""
+    return round(min(max(du / (dw_us or 1) * 100.0 / max(1, int(cores or 1)), 0.0), 100.0), 1)
+
+
+def _normalize_cpu(d: dict) -> None:
+    """v1.21 一次性语义归一：CPU 从「单核百分比」[0, 核数×100] 统一为
+    「占整机算力百分比」[0,100]。老点位 ÷核数 并钳 100，打 meta.cpuNorm 标记防重复。
+    必须在 _sanitize_cpu 之后调用：先剔除物理不可能的脏点，再归一。"""
+    if int(d["meta"].get("cpuNorm") or 0) == 1:
+        return
+    cores = max(1, os.cpu_count() or 1)
+    for seq in (d.get("points") or [], d.get("minutes") or []):
+        for p in seq:
+            try:
+                v = float(p.get("cpu") or 0.0) / cores
+            except (TypeError, ValueError):
+                v = 0.0
+            p["cpu"] = round(min(max(v, 0.0), 100.0), 1)
+    d["meta"]["cpuNorm"] = 1
 
 
 def monitor_read(inst: dict) -> dict:
@@ -80,6 +103,7 @@ def monitor_read(inst: dict) -> dict:
         if not isinstance(d.get("minutes"), list):
             d["minutes"] = []
         _sanitize_cpu(d)
+        _normalize_cpu(d)
         return d
     return None
 
@@ -208,8 +232,8 @@ def monitor_sample(inst: dict, interval: int = 1) -> dict:
 
         if running:
             cid = info.get("id") or ""
-            # CPU：cgroup usage_usec 差分 ÷ 墙钟差 = 单核百分比的物理定义，
-            # 上限钳在 [0, 核数×100%]（旧版这里会算出几万~几十万 %）
+            # CPU：cgroup usage_usec 差分 ÷ 墙钟差 ÷ 核数 = 占整机算力百分比
+            # （v1.21 归一为 0-100 语义，与 UI 阈值/柱宽一致；旧版算的是单核百分比、可到核数×100%）
             u = sm.cpu_usec(cid)
             w = time.time_ns()
             if u is not None:
@@ -219,7 +243,7 @@ def monitor_sample(inst: dict, interval: int = 1) -> dict:
                         du = u - int(base.get("u") or 0)
                         dw = (w - int(base.get("w") or 0)) / 1000.0    # 墙钟差（µs）
                         if du >= 0 and 0 < dw <= 60_000_000:           # 最多回看 60s（跨重启/卡顿作废）
-                            p["cpu"] = round(min(max(du / dw * 100.0, 0.0), cores * 100.0), 1)
+                            p["cpu"] = cpu_norm_percent(du, dw, cores)
                     except (TypeError, ValueError):
                         pass
                 d["meta"]["cpuBase"] = {"u": u, "w": w}

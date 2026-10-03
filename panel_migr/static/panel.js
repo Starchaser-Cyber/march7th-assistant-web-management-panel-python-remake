@@ -695,8 +695,9 @@ function closeTaskSheet() { var o = document.getElementById('taskSheetOverlay');
 function quickTask(key, label) {
   closeTaskSheet();
   if (_fabRunning === false) {
-    if (!confirm('容器当前未运行，先启动容器再执行「' + label + '」？')) return;
-    submitPanelAction('restart'); return;
+    if (!confirm('小助手当前未运行，将自动启动并执行「' + label + '」，继续？')) return;
+    submitPanelAction(key);
+    return;
   }
   if (typeof _rbTask !== 'undefined' && _rbTask && _rbTask !== label) {
     if (!confirm('已有任务「' + _rbTask + '」运行中，强制切换为「' + label + '」？（原任务会被中断）')) return;
@@ -1003,6 +1004,8 @@ function runbarUpdate(d) {
     bar.style.display = 'none';
     document.body.classList.remove('has-runbar');
     _rbTask = null;
+    var qbOff = document.getElementById('quickStopTask');
+    if (qbOff) qbOff.style.opacity = '0.45';
     return;
   }
   _rbTask = d.task;
@@ -1013,6 +1016,8 @@ function runbarUpdate(d) {
   if (lbl) lbl.textContent = d.task;
   bar.style.display = 'flex';
   document.body.classList.add('has-runbar');
+  var qbOn = document.getElementById('quickStopTask');
+  if (qbOn) qbOn.style.opacity = '1';
   runbarTick();
   _rbTick = setInterval(runbarTick, 1000);
 }
@@ -1028,6 +1033,15 @@ function runbarTick() {
 function runbarStop() {
   if (!confirm('停止当前任务？日志可能不完整。')) return;
   submitPanelAction('stop_task');
+}
+/* ===== v1.21：随时停止（概览页「快捷操作」卡常驻入口） ===== */
+function stopCurrentTask() {
+  if (!confirm('停止当前任务？（容器将重启，日志可能不完整；若当前没有任务在跑则相当于重启容器）')) return;
+  submitPanelAction('stop_task');
+}
+function stopAssistant() {
+  if (!confirm('停止小助手？任务将全部中断；之后点「重启容器」或任意快捷操作即可恢复运行。')) return;
+  submitPanelAction('stop');
 }
 /* ===== v1.18：历史近7天统计图 ===== */
 function renderWeek(week) {

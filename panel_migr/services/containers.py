@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import time
 from shlex import quote
 
 import config as cfg
@@ -25,6 +26,24 @@ def task_start(inst: dict, sub: str) -> dict:
 def container_is_running(inst: dict) -> bool:
     r = run_cmd(f'docker inspect -f "{{{{.State.Running}}}}" {quote(instance_container(inst))} 2>&1')
     return r["out"].strip() == "true"
+
+
+def ensure_running(inst: dict, timeout: float = 15.0) -> dict:
+    """v1.21 链式启动：容器未运行时自动 compose up -d 并轮询等待就绪。
+    成功返回 {"started": bool}（True=本次拉起了容器）；失败返回 {"err": ...}。
+    供快捷操作入口在 exec 任务前调用，实现「点一下 → 小助手自动运行」。"""
+    if container_is_running(inst):
+        return {"started": False}
+    r = compose(inst, "up -d")
+    if r["code"] != 0:
+        return {"err": "小助手自动启动失败：" + r["out"]}
+    deadline = time.time() + max(1.0, timeout)
+    while time.time() < deadline:
+        if container_is_running(inst):
+            time.sleep(0.6)  # 等容器主进程初始化完再 exec 任务
+            return {"started": True}
+        time.sleep(0.5)
+    return {"err": f"小助手启动超时（{int(max(1.0, timeout))} 秒内未进入运行状态），请点「重启容器」后重试"}
 
 
 def container_status(inst: dict) -> str:
@@ -92,7 +111,7 @@ def history_clear(inst: dict) -> dict:
 
 
 __all__ = [
-    "compose", "task_start", "container_is_running", "container_status",
+    "compose", "task_start", "container_is_running", "container_status", "ensure_running",
     "op_restart", "op_update", "op_stop_task", "op_stop_loop", "op_stop",
     "op_task", "history_clear", "history_read",
 ]

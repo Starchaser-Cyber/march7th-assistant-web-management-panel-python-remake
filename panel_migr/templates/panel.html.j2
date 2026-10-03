@@ -237,7 +237,10 @@
       </div>
 
       <div class="card">
-        <h2><span class="icon">⚡</span> 快捷操作</h2>
+        <h2><span class="icon">⚡</span> 快捷操作
+          <button type="button" class="btn small red" id="quickStopTask" onclick="stopCurrentTask()" style="margin-left:auto;opacity:.45;" title="随时停止正在运行的任务">⏹️ 停止任务</button>
+          <button type="button" class="btn small gray" onclick="stopAssistant()" style="margin-left:6px;" title="随时停止小助手容器，之后点重启容器或任意快捷操作即可恢复">⏸️ 停止小助手</button>
+        </h2>
         <div class="btn-group">
           {% for key, t in TASKS.items() %}
           <form method="post" style="display:inline;">{{ csrf_field() }}<input type="hidden" name="action" value="{{ key }}"><button type="submit" class="btn primary">{{ t['icon'] ~ ' ' ~ t['label'] }}</button></form>

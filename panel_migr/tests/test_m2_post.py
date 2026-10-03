@@ -226,6 +226,7 @@ def test_non_dangerous_action_not_quiet(monkeypatch):
 
     calls = []
     monkeypatch.setattr(W, "alert_quiet", lambda inst, sec: calls.append(1))
+    monkeypatch.setattr(W, "ensure_running", lambda inst, timeout=15.0: {"started": False})
     monkeypatch.setattr(W, "task_start", lambda inst, sub: {"code": 0, "out": ""})
     monkeypatch.setattr(W, "history_add", lambda inst, k, l: None)
     post("daily")
@@ -303,6 +304,7 @@ def test_all_8_task_actions(monkeypatch):
     import routers.write as W
 
     started, added = [], []
+    monkeypatch.setattr(W, "ensure_running", lambda inst, timeout=15.0: {"started": False})
     monkeypatch.setattr(W, "task_start", lambda inst, sub: started.append(sub) or {"code": 0, "out": ""})
     monkeypatch.setattr(W, "history_add", lambda inst, k, l: added.append(k))
     for key, label in cfg.TASKS.items():
@@ -316,6 +318,7 @@ def test_all_8_task_actions(monkeypatch):
 def test_task_start_failure(monkeypatch):
     import routers.write as W
 
+    monkeypatch.setattr(W, "ensure_running", lambda inst, timeout=15.0: {"started": False})
     monkeypatch.setattr(W, "task_start", lambda inst, sub: {"code": 1, "out": "boom"})
     r = post("power")
     assert "任务启动失败：boom" in r.text

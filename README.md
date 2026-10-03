@@ -4,7 +4,7 @@
 
 ![许可证](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Python 版本](https://img.shields.io/badge/python-3.11%2B-green)
-![最新版本](https://img.shields.io/badge/version-V1.20-orange)
+![最新版本](https://img.shields.io/badge/version-V1.21-orange)
 ![构建状态](https://img.shields.io/badge/build-140%20tests%20passing-brightgreen)
 ![Stars](https://img.shields.io/github/stars/Starchaser-Cyber/march7th-assistant-web-management-panel-python-remake?style=flat)
 
@@ -18,7 +18,7 @@
 
 - ✅ 适配已部署 Docker 版小助手的玩家；还没部署的，先按下方 [快速开始](#-快速开始--部署教程) 从零搞定（约 20 分钟）
 - ✅ 纯 Python 依赖、文件存储（JSON + SQLite 事件库），**无需数据库**，开箱即用
-- ✅ 140 个 pytest 自动化测试、`routers` / `services` 清晰分层，方便二次开发
+- ✅ 181 个 pytest 自动化测试、`routers` / `services` 清晰分层，方便二次开发
 - ✅ 手机、电脑浏览器均可使用
 
 ## ✨ 核心特性
@@ -28,6 +28,7 @@
 - **多实例切换**：侧边栏下拉一键切换多个小助手实例（多账号 / 多容器），每个实例独立管理任务、配置、日志
 - **实时状态**：容器运行状态徽章 + 自动刷新，WebSocket 断线自动重连
 - **执行任务**：全量运行 / 日常任务 / 清体力 / 测试通知 / 差分宇宙 / 模拟宇宙 / 货币战争 / 货币战争循环，一键触发
+- **一键链式启动与随时停止**：点快捷操作若小助手未运行会自动拉起并接着执行任务；概览页常驻「⏹️ 停止任务」「⏸️ 停止小助手」按钮，随时可控
 - **运行中任务悬浮条**：有任务在跑时屏幕边缘浮出悬浮条，实时显示任务名与已运行时长，随时 ⏹ 停止、点 📝 直达日志
 - **底部中央快捷键**：中央圆钮点一下弹出任务清单想跑哪个点哪个，长按弹容器操作菜单（重启 / 停止 / 更新镜像）
 - **任务执行历史**：自动记录每次任务的开始时间、耗时与结果，顶部显示「今日执行 N 次 · 成功 X 次」；运行中 / 已完成 / 已中断三色徽章，按实例保存、保留最近 200 条
@@ -64,7 +65,7 @@
 - **WebSocket 事件流**：日志、监控、告警实时推送，页面无需刷新
 - **systemd 常驻**：`Restart=always` 崩溃自动重启、开机自启；默认仅监听 `127.0.0.1`
 - **可靠数据落盘**：监控数据原子写（临时文件 + `os.replace`），杜绝并发写坏 JSON
-- **可测试**：pytest 回归 `166 passed, 3 skipped`，路由层与业务层分离
+- **可测试**：pytest 回归 `181 passed, 3 skipped`，路由层与业务层分离
 
 ## 界面预览 / 效果展示
 
@@ -208,7 +209,7 @@ M7A_PANEL_DIR="$(pwd)/.." .venv/bin/python main.py
 .venv/bin/python -m compileall -q .
 ```
 
-预期结果：`166 passed, 3 skipped`。
+预期结果：`181 passed, 3 skipped`。
 
 5. 浏览器访问：
 
@@ -490,7 +491,7 @@ journalctl -u m7a-panel -f      # 实时查看面板日志
     ├── templates/panel.html.j2    #   Jinja2 页面模板
     ├── static/                    #   前端 CSS / JS
     ├── scripts/                   #   辅助脚本
-    └── tests/                     #   pytest 测试（166 用例）
+    └── tests/                     #   pytest 测试（181 用例）
 ```
 
 > `.panel_pass.php`、`.env`、`data/`、`sessions/`、`backups/`、`*.log` 等运行时与敏感文件已被 `.gitignore` 排除，不会进入版本库。
@@ -548,7 +549,7 @@ Python 版写监控文件采用原子写，正常使用不会再损坏；若检�
 
 **10. 测试出现少量 `skipped` 正常吗？**
 
-正常。当前回归结果为 `166 passed, 3 skipped`，skipped 用例依赖特定环境（如 ffmpeg / 容器），环境不具备时自动跳过，不影响功能。
+正常。当前回归结果为 `181 passed, 3 skipped`，skipped 用例依赖特定环境（如 ffmpeg / 容器），环境不具备时自动跳过，不影响功能。
 
 ### 附：小助手与面板速查表
 
@@ -621,6 +622,24 @@ python3 -m venv .venv
 再次感谢每一位贡献者的审阅与建议！
 
 ## 更新日志（Changelog）
+
+### V1.21（2026-10-03）
+
+**一句话总结**：点快捷操作小助手自动运行、概览页随时可停、资源监控 CPU 归一 0-100 根治爆表。
+
+✨ 新增
+
+- 快捷操作一键链式启动：容器没在运行时点任意快捷操作，小助手会自动拉起并接着执行任务，不用再先手动启动容器；桌面、手机中央键与搜索入口一次全生效
+- 概览页「快捷操作」卡新增常驻「⏹️ 停止任务」「⏸️ 停止小助手」按钮，随时一键停止，带二次确认防误触；任务运行中停止按钮自动高亮
+
+🐛 修复
+
+- 资源监控 CPU 占用统一为「占整机算力百分比（0-100%）」：重负载不再显示 100% 以上、进度条不再溢出，60% 黄 / 80% 红阈值恢复准确；历史曲线一次性归一，不再冒出超高点位
+- 手机端中央键快捷任务确认后只重启容器、任务没有真正执行的缺陷（现在直接提交任务，容器没跑会先自动拉起）
+
+📝 其他
+
+- 版本号升级 1.21，自动化测试增至 181 项
 
 ### V1.20（2026-10-03）
 
