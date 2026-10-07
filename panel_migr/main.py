@@ -16,6 +16,7 @@ import config
 from gateway import forward
 from phpsess import is_auth, load_session
 from routers import GET_HANDLERS, SPECIAL_GETS
+from routers.panel import render_fallback
 from routers.write import handle_post
 
 app = FastAPI(title="m7a_panel (python)", version=config.PANEL_VERSION)
@@ -72,20 +73,28 @@ async def dispatch_get(request: Request) -> Response:
     if authed and qp.get("ajax"):
         handler = GET_HANDLERS.get(qp["ajax"])
         if handler is None:
-            # PHP 对未知 ajax 是 exit 空响应；转发后 PHP 行为一致
-            return await forward(request)
+            # 未知 ajax：旧行为是回源（PHP 对未知 ajax 是 exit 空响应）。
+            # v1.22 M6：Python 为唯一后端，本地直接返回空响应（与旧站点行为一致）。
+            if config.FWD_ENABLE:
+                return await forward(request)
+            return Response(content="", media_type="text/plain")
         return await _run_handler(request, handler)
 
     # 2) key 回调（免登录）与下载（需登录）
     for param, expected, need_auth, handler in SPECIAL_GETS:
         if qp.get(param) == expected:
             if need_auth and not authed:
-                break  # 未登录的下载请求 → PHP 渲染登录页
+                break  # 未登录的下载请求 → 渲染登录页
             return await _run_handler(request, handler)
 
-    # 3) 页面（M5-B：Python/Jinja 渲染；manifest/icon 为页面附属仍回 PHP）
+    # 3) 页面（Python/Jinja 渲染）
+    # PWA 附属资源：v1.22 起由 Python 本地生成，不再回源（回滚时仍走转发）
     if "manifest" in qp or "icon" in qp:
-        return await forward(request)
+        if config.FWD_ENABLE:
+            return await forward(request)
+        from routers.panel import icon_response, manifest_response
+
+        return icon_response(request) if "icon" in qp else manifest_response(request)
 
     from services.pagectx import page_response
 
@@ -108,7 +117,9 @@ async def catch_all(request: Request, full_path: str):
     if request.method == "POST":
         if path in _PANEL_PATHS:
             return await dispatch_post(request)
-        return await forward(request)
+        if config.FWD_ENABLE:
+            return await forward(request)
+        return await render_fallback(request)
     if request.method == "GET":
         if full_path.startswith("m7a-preview/"):
             # M3：/m7a-preview/* 反代容器内 preview_server（动态 IP + 自愈）
@@ -117,8 +128,13 @@ async def catch_all(request: Request, full_path: str):
             return await proxy_http(request)
         if path in _PANEL_PATHS:
             return await dispatch_get(request)
+        if config.FWD_ENABLE:
+            return await forward(request)
+        return await render_fallback(request)
+    # PUT/DELETE/OPTIONS/PATCH：面板不使用；回滚时转发，否则本地 405
+    if config.FWD_ENABLE:
         return await forward(request)
-    return await forward(request)
+    return JSONResponse({"ok": False, "msg": "不支持的请求方法"}, status_code=405)
 
 
 # ===== WebSocket：M1 阶段原样转发回 PHP（M3 替换）=====

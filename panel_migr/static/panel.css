@@ -969,3 +969,108 @@ html[data-theme="light"] .card { background:var(--glass-bg); }
   /* v1.17：悬浮胶囊/快捷菜单/回顶部 降级为实底 */
   .mobile-tabbar, .sheet, .backtop, .runbar, .search-panel { -webkit-backdrop-filter:none; backdrop-filter:none; background:var(--card); }
 }
+
+/* ===== v1.22：新增功能的独立命名空间样式（增量，不污染既有外观） ===== */
+
+/* ---- A. 监控「自定义」时段行 ---- */
+.mon-custom { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 12px; }
+.mon-custom-in {
+  font-size:12px; padding:5px 9px; border-radius:8px; border:1px solid var(--border);
+  background:var(--card2); color:var(--text); font-family:inherit; max-width:210px;
+}
+.mon-custom-sep { color:var(--muted); font-size:12px; }
+.mon-custom-note {
+  flex-basis:100%; font-size:11.5px; color:var(--muted); line-height:1.6; word-break:break-all;
+}
+.mon-custom-note b { color:var(--text); font-weight:600; }
+
+/* ---- B. 告警历史时间轴 ---- */
+.alert-tl-bar {
+  display:flex; align-items:center; gap:6px; flex-wrap:wrap;
+  position:sticky; top:0; z-index:2; padding:4px 0 8px;
+  background:var(--card2); border-bottom:1px dashed var(--border);
+}
+.alert-tl-sel, .alert-tl-dt {
+  font-size:11.5px; padding:4px 7px; border-radius:8px; border:1px solid var(--border);
+  background:var(--card2); color:var(--text); font-family:inherit; max-width:170px;
+}
+.alert-tl-sep { color:var(--muted); font-size:12px; }
+.alert-tl { display:flex; flex-direction:column; gap:10px; padding-top:8px; }
+.alert-tl-group { display:flex; flex-direction:column; }
+.alert-tl-day {
+  font-size:11px; color:var(--muted); font-weight:600; letter-spacing:.4px;
+  padding:2px 0 6px; position:sticky; top:34px; background:var(--card2);
+}
+.alert-tl-item { display:flex; gap:9px; padding:5px 0; border-bottom:1px dashed var(--border); }
+.alert-tl-dot { width:9px; height:9px; border-radius:50%; margin-top:5px; flex:0 0 auto; background:var(--muted); }
+.alert-tl-dot.down { background:var(--red); }
+.alert-tl-dot.recovered { background:var(--green); }
+.alert-tl-dot.aborted { background:var(--orange); }
+.alert-tl-main { flex:1 1 auto; min-width:0; }
+.alert-tl-row { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
+.alert-tl-time { font-size:11px; color:var(--muted); white-space:nowrap; }
+.alert-tl-title { font-size:12.5px; font-weight:700; }
+.alert-tl-kind { font-size:10.5px; padding:1px 7px; border-radius:999px; border:1px solid var(--border); color:var(--muted); }
+.alert-tl-kind.down { color:var(--red); border-color:var(--red); }
+.alert-tl-kind.recovered { color:var(--green); border-color:var(--green); }
+.alert-tl-kind.aborted { color:var(--orange); border-color:var(--orange); }
+.alert-tl-push { margin-left:auto; }
+.alert-tl-badge { font-size:10.5px; padding:1px 8px; border-radius:999px; white-space:nowrap; }
+.alert-tl-badge.ok { background:var(--green-bg); color:var(--green); }
+.alert-tl-badge.retry { background:var(--orange-bg); color:var(--orange); }
+.alert-tl-badge.fail { background:var(--red-bg); color:var(--red); }
+.alert-tl-badge.none { background:var(--card-solid,var(--card2)); color:var(--muted); }
+.alert-tl-body { font-size:11.5px; color:var(--muted); line-height:1.55; margin-top:3px; word-break:break-word; }
+.alert-tl-empty { font-size:12px; color:var(--muted); padding:6px 0; }
+.alert-tl-new { animation:alertTlIn .9s ease-out; }
+@keyframes alertTlIn { from { background:var(--primary-soft); } to { background:transparent; } }
+
+/* ---- C. 计划任务 表格 / 日历 切换 ---- */
+.sched-cal-bar { display:flex; gap:6px; margin-bottom:10px; }
+.sched-cal-tab {
+  font-size:11.5px; padding:5px 12px; border-radius:8px; cursor:pointer; font-family:inherit;
+  border:1px solid var(--border); background:var(--card2); color:var(--muted);
+}
+.sched-cal-tab.active { background:var(--grad); color:#fff; border-color:transparent; }
+.sched-cal-wrap { margin-top:2px; }
+.sched-cal-scroll { overflow-x:auto; border:1px solid var(--border); border-radius:12px; background:var(--card2); }
+.sched-cal { border-collapse:collapse; width:100%; min-width:660px; }
+.sched-cal th, .sched-cal td { border:1px solid var(--border); font-weight:400; }
+.sched-cal-corner, .sched-cal-th {
+  font-size:11.5px; color:var(--muted); font-weight:600; padding:6px 8px;
+  position:sticky; top:0; background:var(--card2); text-align:center;
+}
+.sched-cal-hour {
+  font-size:10.5px; color:var(--muted); text-align:right; padding:2px 8px;
+  white-space:nowrap; width:52px; background:var(--card2); vertical-align:top;
+}
+.sched-cal-cell { padding:2px; vertical-align:top; min-width:82px; height:26px; }
+.sched-cal-ev {
+  display:flex; gap:5px; align-items:baseline; width:100%; box-sizing:border-box;
+  text-align:left; cursor:pointer; font-family:inherit; margin:1px 0; padding:2px 6px;
+  border-radius:7px; border:1px solid var(--primary); background:var(--primary-soft);
+  color:var(--primary); font-size:10.5px; line-height:1.4;
+}
+.sched-cal-ev-time { font-weight:700; white-space:nowrap; }
+.sched-cal-ev-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sched-cal-ev.off { border-color:var(--border); background:var(--card-solid,var(--card2)); color:var(--muted); opacity:.75; }
+.sched-cal-empty { font-size:12.5px; color:var(--muted); padding:14px; border:1px dashed var(--border); border-radius:12px; }
+.sched-cal-hint { font-size:11.5px; color:var(--muted); line-height:1.6; margin:10px 0 0; }
+.sched-cal-off { color:var(--muted); text-decoration:underline dotted; }
+table.sched-table tr.sched-cal-hl { animation:schedRowHl 2.2s ease-out; }
+@keyframes schedRowHl {
+  0% { background:var(--primary-soft); }
+  70% { background:var(--primary-soft); }
+  100% { background:transparent; }
+}
+
+@media (max-width:640px) {
+  .alert-tl-sel, .alert-tl-dt { max-width:132px; }
+  .alert-tl-day { top:30px; }
+  .sched-cal { min-width:560px; }
+  .sched-cal-cell { min-width:70px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .alert-tl-new { animation:none; }
+  table.sched-table tr.sched-cal-hl { animation:none; background:var(--primary-soft); }
+}

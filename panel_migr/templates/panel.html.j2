@@ -172,6 +172,7 @@
             <button type="button" class="btn small" data-range="1m" onclick="setMonRange('1m')">近1分钟</button>
             <button type="button" class="btn small active" data-range="1h" onclick="setMonRange('1h')">近1小时</button>
             <button type="button" class="btn small" data-range="1d" onclick="setMonRange('1d')">近1天</button>
+            <button type="button" class="btn small" data-range="custom" onclick="setMonRange('custom')">自定义</button>
           </span>
           <select id="monInterval" onchange="setMonitorInterval(this.value)" style="margin-left:auto;font-size:12px;padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:var(--card2);color:var(--text);">
             <option value="1"{{ (' selected' if _monIv == 1 else '') }}>1秒</option>
@@ -183,6 +184,13 @@
           </select>
           <button class="btn small gray" onclick="loadMonitor(true)" style="margin-left:8px;">立即刷新</button>
         </h2>
+        <div class="mon-custom" id="monCustomBox" style="display:none;">
+          <input type="datetime-local" id="monFrom" class="mon-custom-in" aria-label="开始时间">
+          <span class="mon-custom-sep">→</span>
+          <input type="datetime-local" id="monTo" class="mon-custom-in" aria-label="结束时间">
+          <button type="button" class="btn small primary" onclick="queryMonRange()">查询</button>
+          <span class="mon-custom-note" id="monSrcNote" style="display:none;"></span>
+        </div>
         <div class="mon-grid">
           <div class="mon-stat" id="monCpu"><div class="m-label">CPU 使用率</div><div class="m-value">--</div><div class="m-bar"><i style="width:0%"></i></div></div>
           <div class="mon-stat" id="monMem"><div class="m-label">内存使用率</div><div class="m-value">--</div><div class="m-bar"><i style="width:0%"></i></div></div>
@@ -400,6 +408,12 @@
           </form>
         </h2>
 
+        <div class="sched-cal-bar">
+          <button type="button" class="sched-cal-tab active" id="schedViewTable" onclick="setSchedView('table')">📋 表格</button>
+          <button type="button" class="sched-cal-tab" id="schedViewCal" onclick="setSchedView('cal')">🗓 日历</button>
+        </div>
+        <script type="application/json" id="schedDataJson">{{ json_encode(schedData['tasks']) | safe }}</script>
+
         <div class="hist-table-wrap">
           <table class="hist-table sched-table">
             <thead><tr><th>名称</th><th>时间</th><th>星期</th><th>任务</th><th>状态</th><th>上次结果</th><th style="text-align:right;">操作</th></tr></thead>
@@ -433,6 +447,8 @@
             </tbody>
           </table>
         </div>
+
+        <div class="sched-cal-wrap" id="schedCalWrap" style="display:none;"></div>
 
         <form method="post" class="sched-form">
           {{ csrf_field() }}

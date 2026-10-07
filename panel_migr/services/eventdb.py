@@ -110,16 +110,31 @@ def insert_event(ts: int, etype: str, inst: str, payload: dict) -> bool:
         return False
 
 
-def list_events(etype: str, limit: int = 50) -> list[dict]:
-    """按 seq 倒序取状态机事件（payload 已还原为 dict）。"""
+def list_events(etype: str, limit: int = 50, kind: str | None = None,
+                frm: int | None = None, to: int | None = None) -> list[dict]:
+    """按 seq 倒序取状态机事件（payload 已还原为 dict）。
+
+    v1.22：新增可选过滤 kind（payload.kind，Python 侧过滤）/ frm / to（unix 秒区间）。
+    无参数时行为与旧版完全一致（向后兼容）。
+    """
+    sql = "SELECT ts, type, inst, payload FROM events WHERE type=?"
+    args: list = [str(etype)]
+    if frm is not None:
+        sql += " AND ts >= ?"
+        args.append(int(frm))
+    if to is not None:
+        sql += " AND ts <= ?"
+        args.append(int(to))
+    sql += " ORDER BY seq DESC"
+    if kind:
+        sql += " LIMIT 5000"          # kind 在 JSON 内 → 取范围内更宽，Python 过滤后再截断
+    else:
+        sql += " LIMIT ?"
+        args.append(int(limit))
     try:
         with _lock:
             c = _conn()
-            rows = c.execute(
-                "SELECT ts, type, inst, payload FROM events WHERE type=? "
-                "ORDER BY seq DESC LIMIT ?",
-                (str(etype), int(limit)),
-            ).fetchall()
+            rows = c.execute(sql, args).fetchall()
     except (sqlite3.Error, OSError, ValueError):
         return []
     out = []
@@ -129,7 +144,99 @@ def list_events(etype: str, limit: int = 50) -> list[dict]:
         except ValueError:
             body = {}
         out.append({"ts": int(ts), "type": etype_r, "inst": inst, **(body or {})})
+    if kind:
+        out = [e for e in out if str(e.get("kind") or "") == str(kind)]
+        out = out[:int(limit)]
     return out
+
+
+def clear_events(etype: str, inst: str | None = None) -> int:
+    """删除该类型（可选按实例）全部事件；返回删除行数，失败返回 -1。"""
+    try:
+        with _lock:
+            c = _conn()
+            if inst:
+                cur = c.execute("DELETE FROM events WHERE type=? AND inst=?",
+                                (str(etype), str(inst)))
+            else:
+                cur = c.execute("DELETE FROM events WHERE type=?", (str(etype),))
+            c.commit()
+            return int(cur.rowcount)
+    except (sqlite3.Error, OSError, ValueError):
+        return -1
+
+
+# ===== v1.22 监控自定义时段区间查询 =====
+
+RANGE_RAW_MAX = 2 * 3600            # ≤2 小时用 monitor_samples 原始点，否则用分钟聚合
+RANGE_MAX_POINTS = 10000            # 超过该点数自动等间隔降采样
+
+
+def _fnum(v, default=0.0) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _downsample(points: list, max_points: int) -> list:
+    """等间隔降采样到 max_points 个点（保留首尾，避免曲线两端丢失）。"""
+    n = len(points)
+    if max_points <= 0 or n <= max_points:
+        return points
+    step = n / float(max_points)
+    out = [points[min(n - 1, int(i * step))] for i in range(max_points)]
+    if out:
+        out[-1] = points[-1]
+    return out
+
+
+def query_range(inst: str, frm: int, to: int,
+                max_points: int = RANGE_MAX_POINTS) -> tuple:
+    """区间查询监控点位。返回 (bucket, points)。
+
+    自动选粒度：区间 ≤2h → monitor_samples 原始点（bucket="raw"）；
+    >2h → monitor_minutes 聚合（bucket="minute"）。结果超 max_points 自动等间隔降采样。
+    raw 点位字段与 ?ajax=monitor 的 points 一致（t/cpu/mem/disk/netIn/netOut/load/uptime）；
+    minute 点位字段为 t/cpu/mem/disk。任何失败返回 (bucket, [])。
+    """
+    try:
+        frm = int(frm)
+        to = int(to)
+    except (TypeError, ValueError):
+        return "raw", []
+    if to < frm:
+        frm, to = to, frm
+    bucket = "raw" if (to - frm) <= RANGE_RAW_MAX else "minute"
+    key = str(inst or "")
+    try:
+        with _lock:
+            c = _conn()
+            if bucket == "raw":
+                rows = c.execute(
+                    "SELECT ts, cpu, mem, disk, net_in, net_out, load, uptime, running "
+                    "FROM monitor_samples WHERE inst=? AND ts BETWEEN ? AND ? "
+                    "ORDER BY ts ASC", (key, frm, to)).fetchall()
+            else:
+                rows = c.execute(
+                    "SELECT t, cpu, mem, disk FROM monitor_minutes "
+                    "WHERE inst=? AND t BETWEEN ? AND ? ORDER BY t ASC",
+                    (key, frm, to)).fetchall()
+    except (sqlite3.Error, OSError, ValueError):
+        return bucket, []
+    if bucket == "raw":
+        pts = [{"t": int(r[0]), "cpu": round(_fnum(r[1]), 1),
+                "mem": round(_fnum(r[2]), 1), "disk": int(r[3] or 0),
+                "netIn": round(_fnum(r[4]), 1), "netOut": round(_fnum(r[5]), 1),
+                "load": round(_fnum(r[6]), 2), "uptime": int(r[7] or 0),
+                "running": int(r[8] or 0)} for r in rows]
+    else:
+        pts = [{"t": int(r[0]), "cpu": round(_fnum(r[1]), 1),
+                "mem": round(_fnum(r[2]), 1), "disk": round(_fnum(r[3]), 1)}
+               for r in rows]
+    if max_points and len(pts) > int(max_points):
+        pts = _downsample(pts, int(max_points))
+    return bucket, pts
 
 
 def insert_sample(p: dict, running: bool, inst: str = "") -> bool:

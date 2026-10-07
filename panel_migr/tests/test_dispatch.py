@@ -127,11 +127,13 @@ def test_unauth_renders_login_page():
     assert not RECEIVED
 
 
-def test_unknown_ajax_forwards():
+def test_unknown_ajax_local_empty():
+    """v1.22 M6：Python 唯一后端，未知 ajax 不再回源，本地返回空响应。"""
     RECEIVED.clear()
-    r = client.get("/?ajax=not_migrated_yet", cookies=AUTH_COOKIE)   # 未迁移接口
-    assert r.text == "MOCK_PHP_PAGE"
-    assert _last_forward()[1].get("X-M7A-Fwd") == "1"
+    r = client.get("/?ajax=not_migrated_yet", cookies=AUTH_COOKIE)   # 未知接口
+    assert r.status_code == 200
+    assert r.text == ""
+    assert not RECEIVED                       # 没有转发到旧站点
 
 
 def test_m2_ajax_handled_by_python():
@@ -166,13 +168,14 @@ def test_static_served_by_python():
     assert not RECEIVED
 
 
-def test_post_forwards():
-    """未实现的 action 仍走绞杀者转发回 PHP。"""
+def test_post_unknown_action_local_render():
+    """v1.22 M6：未实现的 action 不再回源，本地渲染面板页兜底（200）。"""
     RECEIVED.clear()
     r = client.post("/", data={"action": "action_not_migrated", "csrf": "abc"},
                     cookies=CSRF_COOKIE)
-    assert r.text == "MOCK_PHP_PAGE"
-    assert RECEIVED[0][0] == "/"
+    assert r.status_code == 200
+    assert "<!-- ===== 概览 ===== -->" in r.text
+    assert not RECEIVED                       # 没有转发
 
 
 def test_post_login_handled_by_python():

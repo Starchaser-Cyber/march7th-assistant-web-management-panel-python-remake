@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from services import history as hist
 from services import logs as lg
 from services import monitor as mon
+from services import eventdb
 from services.instances import instance_current
 from services.shell import run_cmd
 
@@ -113,6 +114,42 @@ def h_monitor(request):
     })
 
 
+def h_monitor_range(request):
+    """GET ?ajax=monitor_range&from=<unix>&to=<unix> → 自定义时段监控点位。
+
+    v1.22：区间 ≤2h 返回原始采样点（bucket=raw），>2h 返回分钟聚合（bucket=minute），
+    超 1 万点自动等间隔降采样。参数非法返回 ok=false；空区间返回空 points 不报错。
+    """
+    inst = _inst(request)
+    qp = request.query_params
+
+    def _ts(name):
+        v = qp.get(name)
+        if v is None or str(v).strip() == "":
+            return None
+        try:
+            return int(float(v))
+        except (TypeError, ValueError):
+            return None
+
+    frm = _ts("from")
+    to = _ts("to")
+    if frm is None or to is None:
+        return JSONResponse({"ok": False, "msg": "缺少或非法的 from/to 参数（需 unix 秒）"})
+    if to < frm:
+        frm, to = to, frm
+    sid = str(inst.get("id") or inst.get("container") or "")
+    bucket, points = eventdb.query_range(sid, frm, to)
+    return JSONResponse({
+        "ok": True,
+        "bucket": bucket,
+        "from": int(frm),
+        "to": int(to),
+        "count": len(points),
+        "points": points,
+    })
+
+
 def h_history(request):
     """GET ?ajax=history → 任务历史（返回前先做结束判定）。"""
     inst = _inst(request)
@@ -132,5 +169,6 @@ GET_HANDLERS = {
     "log": h_log,
     "running": h_running,
     "monitor": h_monitor,
+    "monitor_range": h_monitor_range,
     "history": h_history,
 }

@@ -78,14 +78,14 @@ def test_registry_covers_all_36_actions():
         "restart", "update", "update_image", "stop_task", "stop_loop",
         "stop", "do_update", "set_after_finish", "alert_save", "alert_test",
         "set_update_mode", "set_monitor_interval", "save_config_form",
-        "save_config_text", "backup_rollback", "history_clear",
+        "save_config_text", "backup_rollback", "history_clear", "alert_clear",
         "schedule_add", "schedule_del", "schedule_toggle",
         "schedule_conflict", "schedule_now",
         "main", "daily", "power", "notify", "divergentloop",
         "universe", "currencywars", "currencywarsloop",
     }
     assert set(POST_HANDLERS) == expected
-    assert len(expected) == 36
+    assert len(expected) == 37
 
 
 # ---------- W1：认证 4 + CSRF + 危险静默 ----------
@@ -246,9 +246,11 @@ def test_non_dangerous_action_not_quiet(monkeypatch):
     assert calls == []
 
 
-def test_unknown_action_forwards():
+def test_unknown_action_local_render():
+    # v1.22 M6：Python 唯一后端，未知 action 本地渲染面板页兜底，不回源
     r = post("not_migrated_action")
-    assert r.text == "MOCK_PHP_PAGE"
+    assert r.status_code == 200
+    assert "<!-- ===== 概览 ===== -->" in r.text
 
 
 # ---------- W1：恢复配置 ----------

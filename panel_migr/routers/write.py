@@ -482,6 +482,18 @@ def h_history_clear(request, form, session, sid):
     return J({"ok": False, "msg": "清空失败，请检查 data 目录写权限"})
 
 
+def h_alert_clear(request, form, session, sid):
+    """POST action=alert_clear → 清空告警历史（SQLite events type=alert）。
+
+    v1.22：与其它写操作一致走 CSRF 校验；失败不抛，返回结构化结果。
+    """
+    from services import eventdb
+    n = eventdb.clear_events("alert")
+    if n < 0:
+        return J({"ok": False, "msg": "清空失败，请检查 data 目录写权限"})
+    return J({"ok": True, "msg": f"告警历史已清空（{n} 条）"})
+
+
 # ===== 计划任务 5（W5）=====
 
 
@@ -619,6 +631,7 @@ POST_HANDLERS = {
     # 回滚 / 历史
     "backup_rollback": h_backup_rollback,
     "history_clear": h_history_clear,
+    "alert_clear": h_alert_clear,
     # 计划任务
     "schedule_add": h_schedule_add,
     "schedule_del": h_schedule_del,
@@ -677,9 +690,13 @@ async def handle_post(request) -> Response:
 
     handler = POST_HANDLERS.get(action)
     if handler is None:
-        # 绞杀者：未迁移的 action 仍回 PHP 执行
-        from gateway import forward
-        return await forward(request)
+        # v1.22 M6：Python 为唯一后端；未知 action 不再回源，本地渲染面板页兜底。
+        # （回滚开关打开时仍走网关转发）
+        if cfg.FWD_ENABLE:
+            from gateway import forward
+            return await forward(request)
+        from routers.panel import render_fallback
+        return render_fallback(request)
 
     import anyio.to_thread as to_thread
     result = await to_thread.run_sync(handler, request, form, session, sid)

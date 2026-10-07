@@ -489,7 +489,7 @@ function renderMonitor(d) {
       '<span class="mon-host-row">内存 <b>' + fmtBytes(h.memTotal||0) + '</b></span>' +
       '<span class="mon-host-row">磁盘 <b>' + fmtBytes(h.diskUsed||0) + ' / ' + fmtBytes(h.diskTotal||0) + '</b></span>';
   }
-  if (window.echarts) {
+  if (window.echarts && _monRange !== 'custom') {
     if (!_monChart) {
       var box = document.getElementById('monChart');
       if (box) { box.innerHTML = ''; _monChart = echarts.init(box); }
@@ -523,6 +523,11 @@ function setMonRange(r) {
   for (var i = 0; i < btns.length; i++) {
     btns[i].className = 'btn small' + (btns[i].getAttribute('data-range') === r ? ' active' : '');
   }
+  var cbox = document.getElementById('monCustomBox');
+  if (cbox) cbox.style.display = (r === 'custom') ? '' : 'none';
+  var note = document.getElementById('monSrcNote');
+  if (r === 'custom') { monCustomInit(); return; }
+  if (note) note.style.display = 'none';
   loadMonitor(true);
 }
 function loadMonitor() {
@@ -572,7 +577,76 @@ function setMonitorInterval(iv) {
     }).catch(function(){ alert('❌ 网络错误'); });
 }
 
-/* ===== AJAX 刷新 ===== */
+/* ===== v1.22：监控「自定义」时段查询（?ajax=monitor_range，复用同一张图表） =====
+   仅新增档位，不改变近1分钟/1小时/1天三档行为。custom 档选中后由 queryMonRange 渲染，
+   轮询/WS 触发的 renderMonitor 在该档下会跳过图表重绘，避免覆盖查询结果。 */
+function monLocalInput(ts) {
+  var d = new Date((ts || 0) * 1000);
+  function p(n) { return (n < 10 ? '0' : '') + n; }
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+    + 'T' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+function monTsText(ts) {
+  return new Date((ts || 0) * 1000).toLocaleString('zh-CN',
+    { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+function monCustomInit() {
+  var f = document.getElementById('monFrom'), t = document.getElementById('monTo');
+  if (!f || !t) return;
+  if (!f.value) f.value = monLocalInput(Math.floor(Date.now() / 1000) - 3600);
+  if (!t.value) t.value = monLocalInput(Math.floor(Date.now() / 1000));
+  queryMonRange();
+}
+function queryMonRange() {
+  var f = document.getElementById('monFrom'), t = document.getElementById('monTo');
+  var note = document.getElementById('monSrcNote');
+  if (!f || !t || !f.value || !t.value) { miniToast('请先选择开始与结束时间'); return; }
+  var from = Math.floor(new Date(f.value).getTime() / 1000);
+  var to = Math.floor(new Date(t.value).getTime() / 1000);
+  if (isNaN(from) || isNaN(to) || to <= from) { miniToast('结束时间需晚于开始时间'); return; }
+  if (note) { note.style.display = ''; note.textContent = '查询中…'; }
+  fetch('?ajax=monitor_range&from=' + from + '&to=' + to)
+    .then(function(r){ return r.json(); })
+    .then(function(d){ renderMonRange(d, from, to); })
+    .catch(function(){ if (note) { note.style.display = ''; note.textContent = '网络错误，请重试'; } });
+}
+function renderMonRange(d, from, to) {
+  var note = document.getElementById('monSrcNote');
+  if (!d || !d.ok) { if (note) { note.style.display = ''; note.textContent = '查询失败，请重试'; } return; }
+  var pts = d.points || [];
+  var srcTxt = (d.bucket === 'minute') ? '聚合点（每分钟 1 点）' : '原始采样点';
+  var head = '数据来源：<b>' + srcTxt + '</b> · 共 '
+    + (d.count != null ? d.count : pts.length) + ' 点 · '
+    + monTsText(d.from != null ? d.from : from) + ' ~ ' + monTsText(d.to != null ? d.to : to);
+  if (note) { note.style.display = ''; note.innerHTML = head; }
+  if (!pts.length) {
+    if (_monChart && _monChart.clear) { try { _monChart.clear(); } catch (e) {} }
+    if (note) note.innerHTML = head + ' · <span style="color:var(--muted);">该时段暂无采样数据</span>';
+    return;
+  }
+  if (!window.echarts) { if (note) note.innerHTML = head + ' · <span style="color:var(--muted);">图表组件未就绪</span>'; return; }
+  if (!_monChart) {
+    var box = document.getElementById('monChart');
+    if (!box) return;
+    box.innerHTML = '';
+    _monChart = echarts.init(box);
+  }
+  var times = pts.map(function(p){ return monTsText(p.t); });
+  _monChart.setOption({
+    tooltip: { trigger: 'axis', confine: true },
+    animationDuration: 500, animationEasing: 'cubicOut',
+    legend: { data: ['CPU','内存','磁盘'], textStyle:{color:'#999'}, top:0 },
+    grid: { left:42, right:16, top:34, bottom:44 },
+    xAxis: { type:'category', data:times, boundaryGap:false, axisLine:{lineStyle:{color:'#999'}}, axisLabel:{color:'#999', fontSize:10, rotate:30} },
+    yAxis: { type:'value', max:100, axisLabel:{formatter:'{value}%', color:'#999', fontSize:10}, splitLine:{lineStyle:{color:'rgba(128,128,128,.15)'}} },
+    series: [
+      { name:'CPU', type:'line', smooth:true, showSymbol:false, data:pts.map(function(p){return +(p.cpu||0).toFixed(1);}), lineStyle:{width:2,color:'#ec4899'}, itemStyle:{color:'#ec4899'}, areaStyle:{opacity:.08} },
+      { name:'内存', type:'line', smooth:true, showSymbol:false, data:pts.map(function(p){return +(p.mem||0).toFixed(1);}), lineStyle:{width:2,color:'#38bdf8'}, itemStyle:{color:'#38bdf8'}, areaStyle:{opacity:.08} },
+      { name:'磁盘', type:'line', smooth:true, showSymbol:false, data:pts.map(function(p){return +(p.disk||0).toFixed(1);}), lineStyle:{width:2,color:'#f59e0b'}, itemStyle:{color:'#f59e0b'}, areaStyle:{opacity:.08} }
+    ]
+  }, true);
+}
+
 var _logTimer = null;
 var _statusTimer = null;
 var _logKeywordTimer = null;
@@ -1097,24 +1171,159 @@ function toggleAlertHist() {
   else { b.style.display = 'none'; }
 }
 function loadAlertHist() {
+  var list = alertTimelineShell();
+  if (!list) return;
+  list.innerHTML = '<div class="alert-tl-empty">加载中…</div>';
+  fetch('?ajax=alert_history&limit=200' + alertFilterQS()).then(function(r){ return r.json(); }).then(function(d){
+    if (!d || !d.ok) { list.innerHTML = '<div class="alert-tl-empty">读取失败，请刷新重试</div>'; return; }
+    renderAlertTimeline(d.items || []);
+  }).catch(function(){ list.innerHTML = '<div class="alert-tl-empty">网络错误，请重试</div>'; });
+}
+
+/* ===== v1.22：告警历史可视化（时间轴 / kind 配色 / 推送徽章 / 筛选 / 清空 / 实时插入） ===== */
+/* 写操作端点常量：与既有各写操作请求等价，集中一处便于维护；不散落字面量。 */
+var _PANEL_ACTION = 'action';
+var _alertFilter = { kind: '', from: '', to: '' };
+var ALERT_KIND = {
+  down:      { cls: 'down',      icon: '🔴', label: '异常' },
+  recovered: { cls: 'recovered', icon: '🟢', label: '恢复' },
+  aborted:   { cls: 'aborted',   icon: '🟠', label: '中断' }
+};
+function alertKindMeta(k) { return ALERT_KIND[k] || { cls: 'other', icon: '⚪', label: (k || '事件') }; }
+function alertDayKey(ts) {
+  var d = new Date((ts || 0) * 1000);
+  function p(n) { return (n < 10 ? '0' : '') + n; }
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+function alertElVal(id) { var e = document.getElementById(id); return e ? e.value : ''; }
+function alertLocalToTs(v) {
+  if (!v) return '';
+  var ms = new Date(v).getTime();
+  return isNaN(ms) ? '' : Math.floor(ms / 1000);
+}
+function alertFilterQS() {
+  var qs = '';
+  if (_alertFilter.kind) qs += '&kind=' + encodeURIComponent(_alertFilter.kind);
+  if (_alertFilter.from !== '') qs += '&from=' + _alertFilter.from;
+  if (_alertFilter.to !== '') qs += '&to=' + _alertFilter.to;
+  return qs;
+}
+function alertPushBadge(p) {
+  if (p && p.pushed) return '<span class="alert-tl-badge ok">已推送</span>';
+  var rawRc = (p && (p.retry_count != null ? p.retry_count : p.retryCount));
+  var rc = parseInt(rawRc || 0, 10) || 0;
+  var st = String((p && p.status) || '');
+  var rawOff = (p && (p.push_fail_streak != null ? p.push_fail_streak : p.fail_streak));
+  var off = parseInt(rawOff || 0, 10) || 0;
+  if (st === 'pending' || rc > 0) return '<span class="alert-tl-badge retry">重试中（已重试 ' + rc + ' 次）</span>';
+  if (st === 'fail' || st === 'failed' || off > 0) return '<span class="alert-tl-badge fail">失败</span>';
+  return '<span class="alert-tl-badge none">未推送</span>';
+}
+function alertItemHtml(it, highlight) {
+  var p = (it && it.payload) || it || {};
+  var meta = alertKindMeta(p.kind || '');
+  var title = p.title || meta.label || '告警';
+  var body = p.body != null ? p.body : (p.msg || '');
+  var ts = (it && it.ts) || 0;
+  return '<div class="alert-tl-item' + (highlight ? ' alert-tl-new' : '') + '">'
+    + '<span class="alert-tl-dot ' + meta.cls + '"></span>'
+    + '<div class="alert-tl-main">'
+    +   '<div class="alert-tl-row">'
+    +     '<span class="alert-tl-time">' + escapeHtml(new Date(ts * 1000).toLocaleTimeString('zh-CN', {hour12:false})) + '</span>'
+    +     '<span class="alert-tl-title">' + meta.icon + ' ' + escapeHtml(title) + '</span>'
+    +     '<span class="alert-tl-kind ' + meta.cls + '">' + escapeHtml(meta.label) + '</span>'
+    +     '<span class="alert-tl-push">' + alertPushBadge(p) + '</span>'
+    +   '</div>'
+    +   (body ? '<div class="alert-tl-body">' + escapeHtml(String(body).replace(/\s*\n\s*/g, ' / ')) + '</div>' : '')
+    + '</div></div>';
+}
+function alertTimelineShell() {
   var box = document.getElementById('alertHistBox');
-  if (!box) return;
-  box.innerHTML = '<div style="color:var(--muted);font-size:12px;">加载中…</div>';
-  fetch('?ajax=alert_history&limit=30').then(function(r){ return r.json(); }).then(function(d){
-    if (!d || !d.ok) { box.innerHTML = '<div style="color:var(--muted);font-size:12px;">读取失败，请刷新重试</div>'; return; }
-    var items = d.items || [];
-    if (!items.length) { box.innerHTML = '<div style="color:var(--muted);font-size:12px;">暂无告警记录</div>'; return; }
-    box.innerHTML = items.map(function(it){
-      var p = it.payload || {};
-      var t = new Date((it.ts || 0) * 1000).toLocaleString('zh-CN', {hour12:false});
-      return '<div style="display:flex;gap:8px;align-items:baseline;font-size:12px;padding:4px 0;border-bottom:1px dashed var(--border);flex-wrap:wrap;">'
-        + '<span style="color:var(--muted);white-space:nowrap;">' + escapeHtml(t) + '</span>'
-        + '<b>' + escapeHtml(p.title || p.kind || '告警') + '</b>'
-        + '<span style="color:var(--muted);">' + escapeHtml(p.kind || '') + '</span>'
-        + '<span style="margin-left:auto;white-space:nowrap;color:' + (p.pushed ? 'var(--green,#22c55e)' : 'var(--muted,#9ca3af)') + ';">' + (p.pushed ? '已推送' : '未推送') + '</span>'
-        + '</div>';
-    }).join('');
-  }).catch(function(){ box.innerHTML = '<div style="color:var(--muted);font-size:12px;">网络错误，请重试</div>'; });
+  if (!box) return null;
+  if (!document.getElementById('alertTlList')) {
+    box.innerHTML =
+      '<div class="alert-tl-bar">'
+      + '<select id="alertTlKind" class="alert-tl-sel" onchange="alertTlApply()">'
+      +   '<option value="">全部类型</option>'
+      +   '<option value="down">异常（down）</option>'
+      +   '<option value="recovered">恢复（recovered）</option>'
+      +   '<option value="aborted">中断（aborted）</option>'
+      + '</select>'
+      + '<input type="datetime-local" id="alertTlFrom" class="alert-tl-dt" onchange="alertTlApply()">'
+      + '<span class="alert-tl-sep">→</span>'
+      + '<input type="datetime-local" id="alertTlTo" class="alert-tl-dt" onchange="alertTlApply()">'
+      + '<button type="button" class="btn small gray" onclick="alertTlReset()">重置</button>'
+      + '<button type="button" class="btn small red" style="margin-left:auto;" onclick="alertClearAll()">🗑 清空历史</button>'
+      + '</div>'
+      + '<div class="alert-tl" id="alertTlList"></div>';
+    var ks = document.getElementById('alertTlKind');
+    if (ks) ks.value = _alertFilter.kind;
+  }
+  return document.getElementById('alertTlList');
+}
+function alertTlApply() {
+  _alertFilter.kind = alertElVal('alertTlKind');
+  _alertFilter.from = alertLocalToTs(alertElVal('alertTlFrom'));
+  _alertFilter.to = alertLocalToTs(alertElVal('alertTlTo'));
+  loadAlertHist();
+}
+function alertTlReset() {
+  _alertFilter = { kind: '', from: '', to: '' };
+  var ks = document.getElementById('alertTlKind'); if (ks) ks.value = '';
+  var f = document.getElementById('alertTlFrom'); if (f) f.value = '';
+  var t = document.getElementById('alertTlTo'); if (t) t.value = '';
+  loadAlertHist();
+}
+function renderAlertTimeline(items) {
+  var list = document.getElementById('alertTlList');
+  if (!list) return;
+  if (!items || !items.length) {
+    list.innerHTML = '<div class="alert-tl-empty">'
+      + (alertFilterQS() ? '当前筛选条件下暂无告警记录' : '暂无告警记录') + '</div>';
+    return;
+  }
+  var html = '', lastDay = '';
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i];
+    var day = alertDayKey(it.ts || 0);
+    if (day !== lastDay) {
+      if (lastDay !== '') html += '</div>';
+      html += '<div class="alert-tl-group" data-day="' + day + '"><div class="alert-tl-day">' + escapeHtml(day) + '</div>';
+      lastDay = day;
+    }
+    html += alertItemHtml(it, false);
+  }
+  if (lastDay !== '') html += '</div>';
+  list.innerHTML = html;
+}
+function alertTlPrepend(payload, ts) {
+  var box = document.getElementById('alertHistBox');
+  var list = document.getElementById('alertTlList');
+  if (!box || !list || box.style.display === 'none') return;
+  var it = { ts: ts || Math.floor(Date.now() / 1000), payload: payload || {} };
+  var html = alertItemHtml(it, true);
+  var day = alertDayKey(it.ts);
+  if (list.querySelector('.alert-tl-empty')) list.innerHTML = '';
+  var top = list.firstElementChild;
+  if (top && top.classList && top.classList.contains('alert-tl-group') && top.getAttribute('data-day') === day) {
+    var hdr = top.querySelector('.alert-tl-day');
+    if (hdr) hdr.insertAdjacentHTML('afterend', html);
+    else top.insertAdjacentHTML('afterbegin', html);
+  } else {
+    list.insertAdjacentHTML('afterbegin',
+      '<div class="alert-tl-group" data-day="' + day + '"><div class="alert-tl-day">' + escapeHtml(day) + '</div>' + html + '</div>');
+  }
+}
+function alertClearAll() {
+  if (!confirm('确定要清空全部告警历史记录吗？此操作不可撤销。')) return;
+  var fd = new FormData();
+  fd.append('action', 'alert_clear');
+  var csrf = document.querySelector('input[name="csrf"]');
+  if (csrf) fd.append('csrf', csrf.value);
+  fetch(_PANEL_ACTION, { method: 'POST', body: fd }).then(function(r){ return r.json(); }).then(function(d){
+    if (d && d.ok) { miniToast('✅ ' + (d.msg || '告警历史已清空')); loadAlertHist(); }
+    else { miniToast('❌ ' + (d && d.msg ? d.msg : '清空失败')); }
+  }).catch(function(){ miniToast('❌ 清空失败：网络错误'); });
 }
 function saveAlert() {
   var btn = document.getElementById('alertSaveBtn');
@@ -1354,8 +1563,7 @@ function evHandle(m) {
   if (m.type === 'history') { if (evCurTab() === 'tasks') evThrottle('hist', loadHistory, 600); return; }
   if (m.type === 'alert') {
     miniToast('⚠️ ' + (p.title || '收到告警'));
-    var hb = document.getElementById('alertHistBox');
-    if (hb && hb.style.display !== 'none') evThrottle('alert', loadAlertHist, 500);
+    alertTlPrepend(p, m.ts);  /* v1.22：历史面板打开时实时插入时间轴顶部并高亮 */
     return;
   }
 }
@@ -1428,6 +1636,110 @@ startMonitor();
   setInterval(function() { fetch('?ajax=alert_check').catch(function() {}); }, 60000);
   evConnect(); /* M5-C：事件流接入（monitor/log/history/alert 推送 + 轮询合并） */
 })();
+
+/* ===== v1.22：计划任务 表格 / 日历（周视图）切换 =====
+   纯前端渲染：数据取自页面内 <script id="schedDataJson">（服务端渲染的计划任务列表）。
+   日历按「星期 + 时间」把任务摆到对应格子；停用灰显；点方块切回表格并定位到该行。
+   切换不改变表格本身及其原有的启用/停用、删除、立即运行等入口。 */
+var SCHED_WEEK = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+function schedTasks() {
+  var el = document.getElementById('schedDataJson');
+  if (!el) return [];
+  try { var v = JSON.parse(el.textContent || '[]'); return (v && v.length) ? v : []; } catch (e) { return []; }
+}
+function schedTaskDays(t) {
+  var d = (t && t._days && t._days.length) ? t._days : ((t && t.days) ? t.days : []);
+  if (!d || !d.length) return [1, 2, 3, 4, 5, 6, 7];  /* 空 = 每天 */
+  return d;
+}
+function schedTaskOn(t) {
+  var e = t && t.enabled;
+  return e === true || e === 1 || e === '1' || e === 'true';
+}
+function setSchedView(v) {
+  var tbl = document.querySelector('table.sched-table');
+  var wrap = tbl ? tbl.closest('.hist-table-wrap') : null;
+  var cal = document.getElementById('schedCalWrap');
+  if (!wrap || !cal) return;
+  var isCal = (v === 'cal');
+  wrap.style.display = isCal ? 'none' : '';
+  cal.style.display = isCal ? '' : 'none';
+  var bt = document.getElementById('schedViewTable'), bc = document.getElementById('schedViewCal');
+  if (bt) bt.className = 'sched-cal-tab' + (isCal ? '' : ' active');
+  if (bc) bc.className = 'sched-cal-tab' + (isCal ? ' active' : '');
+  if (isCal && !cal.getAttribute('data-rendered')) { renderSchedCal(); cal.setAttribute('data-rendered', '1'); }
+}
+function renderSchedCal() {
+  var cal = document.getElementById('schedCalWrap');
+  if (!cal) return;
+  var tasks = schedTasks();
+  if (!tasks.length) {
+    cal.innerHTML = '<div class="sched-cal-empty">还没有计划任务。切回「表格」用下方表单添加后，这里会按每天/星期显示周视图。</div>';
+    return;
+  }
+  var buckets = {};
+  for (var i = 0; i < tasks.length; i++) {
+    var t = tasks[i];
+    var hm = String(t.time || '00:00').split(':');
+    var hh = parseInt(hm[0], 10); if (isNaN(hh) || hh < 0 || hh > 23) hh = 0;
+    var days = schedTaskDays(t);
+    for (var d = 0; d < days.length; d++) {
+      var wd = parseInt(days[d], 10) - 1;
+      if (isNaN(wd) || wd < 0 || wd > 6) continue;
+      var key = hh + '_' + wd;
+      (buckets[key] = buckets[key] || []).push(t);
+    }
+  }
+  var html = '<div class="sched-cal-scroll"><table class="sched-cal"><thead><tr>'
+    + '<th class="sched-cal-corner">时间</th>';
+  for (var c = 0; c < 7; c++) html += '<th class="sched-cal-th">' + SCHED_WEEK[c] + '</th>';
+  html += '</tr></thead><tbody>';
+  for (var h = 0; h < 24; h++) {
+    html += '<tr><th class="sched-cal-hour">' + ((h < 10 ? '0' : '') + h) + ':00</th>';
+    for (var c2 = 0; c2 < 7; c2++) {
+      var list = buckets[h + '_' + c2] || [];
+      html += '<td class="sched-cal-cell">';
+      for (var k = 0; k < list.length; k++) {
+        var tk = list[k];
+        var on = schedTaskOn(tk);
+        var nm = tk.name || tk.id || '任务';
+        var lb = tk._label || tk._daytext || tk.args || '';
+        html += '<button type="button" class="sched-cal-ev' + (on ? '' : ' off') + '"'
+          + ' data-id="' + escapeHtml(String(tk.id || '')) + '"'
+          + ' title="' + escapeHtml(nm + ' · ' + (tk.time || '') + ' · ' + lb + (on ? '' : '（已停用）')) + '">'
+          + '<span class="sched-cal-ev-time">' + escapeHtml(String(tk.time || '')) + '</span>'
+          + '<span class="sched-cal-ev-name">' + escapeHtml(nm) + '</span>'
+          + '</button>';
+      }
+      html += '</td>';
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table></div>'
+    + '<p class="sched-cal-hint">按每个任务的「星期 + 时间」摆到对应格子；不勾选星期 = 每天执行（周一至周日都出现）；<span class="sched-cal-off">灰显</span> = 已停用。点某个任务方块会切回表格并高亮该行，可在那里启用/停用、删除，或用下方表单「立即运行一次」。</p>';
+  cal.innerHTML = html;
+  var evs = cal.querySelectorAll('.sched-cal-ev');
+  for (var e = 0; e < evs.length; e++) {
+    evs[e].addEventListener('click', function () { schedCalGo(this.getAttribute('data-id')); });
+  }
+}
+function schedCalGo(id) {
+  setSchedView('table');
+  if (!id) return;
+  var rows = document.querySelectorAll('table.sched-table tbody tr');
+  for (var i = 0; i < rows.length; i++) {
+    var inp = rows[i].querySelector('input[name="sched_id"]');
+    if (inp && inp.value === id) {
+      var row = rows[i];
+      row.classList.remove('sched-cal-hl');
+      void row.offsetWidth;  /* 重排以重启动画 */
+      row.classList.add('sched-cal-hl');
+      try { row.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e2) { row.scrollIntoView(); }
+      setTimeout(function () { row.classList.remove('sched-cal-hl'); }, 2200);
+      return;
+    }
+  }
+}
 
 /* ===== 保存并重启 ===== */
 function restartAfterSave() {

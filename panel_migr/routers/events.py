@@ -19,13 +19,29 @@ from services.instances import instance_current
 
 
 def h_alert_history(request) -> dict:
-    """GET ?ajax=alert_history → 告警事件（最新在前，limit 1..200）。"""
-    try:
-        limit = int(request.query_params.get("limit") or 50)
-    except (TypeError, ValueError):
-        limit = 50
-    limit = max(1, min(200, limit))
-    return {"ok": True, "items": eventdb.list_events("alert", limit)}
+    """GET ?ajax=alert_history → 告警事件（最新在前，limit 1..200）。
+
+    v1.22：新增可选筛选 kind（down/recovered/aborted）、from/to（unix 秒区间）。
+    无参数时行为与旧版一致（向后兼容）。
+    """
+    qp = request.query_params
+
+    def _int(name, default=None):
+        v = qp.get(name)
+        if v is None or str(v).strip() == "":
+            return default
+        try:
+            return int(float(v))
+        except (TypeError, ValueError):
+            return default
+
+    limit = _int("limit", 50)
+    limit = max(1, min(200, limit or 50))
+    kind = (qp.get("kind") or "").strip() or None
+    frm = _int("from")
+    to = _int("to")
+    return {"ok": True,
+            "items": eventdb.list_events("alert", limit, kind=kind, frm=frm, to=to)}
 
 
 EVENTS_GET_HANDLERS = {"alert_history": h_alert_history}

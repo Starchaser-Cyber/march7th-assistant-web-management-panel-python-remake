@@ -54,9 +54,11 @@ def test_readonly_5_no_regression():
     assert d["ok"] is True and d["interval"] == 60
 
 
-def test_unknown_ajax_forwards():
+def test_unknown_ajax_local_empty():
+    # v1.22 M6：Python 唯一后端，未知 ajax 本地返回空响应，不回源
     r = get("ajax=zzz_not_migrated")
-    assert r.text == "MOCK_PHP_PAGE"
+    assert r.status_code == 200
+    assert r.text == ""
 
 
 # ---------- W6：7 个写型 GET ----------

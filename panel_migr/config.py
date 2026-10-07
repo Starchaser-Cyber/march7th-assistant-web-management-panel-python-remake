@@ -24,7 +24,7 @@ HISTORY_KEEP = 200               # 历史最多保留条数
 SCHEDULE_WINDOW_SECONDS = 1800   # 计划任务补跑窗口（M2+）
 
 # ===== 面板自身更新（与 index.php define() 对齐，M4 可用环境变量覆盖）=====
-PANEL_VERSION = os.environ.get("M7A_PANEL_VERSION", "1.21.1")
+PANEL_VERSION = os.environ.get("M7A_PANEL_VERSION", "1.22")
 UPDATE_ENABLED = True
 UPDATE_TYPE = "github"           # gitea / github
 UPDATE_HOST = os.environ.get("M7A_UPDATE_HOST", "https://github.com")
@@ -57,12 +57,23 @@ PASS_FILE = BASE_DIR / ".panel_pass.php"
 # ===== PHP session 共享（登录态互通的关键）=====
 SESSION_SAVE_PATH = os.environ.get("M7A_SESSION_DIR", "/tmp")
 
-# ===== 绞杀者网关 =====
-# 未实现 / 未登录的请求转发回原 PHP 站点（nginx :9999）。
-# X-M7A-Fwd 标记供 nginx if 排除，防止 8787→9999→8787 转发循环。
+# ===== M6 后端整合（Python 唯一后端）=====
+# v1.22 起 Python 为唯一后端：未匹配的页面/GET 由 Python 本地渲染，不再转发回旧站点。
+# FWD_ENABLE=1 时恢复转发链路（回滚开关，用于极端情况兜底）。
+# 说明：面板对外访问入口（含 9999 端口）由反代层 proxy_pass 到本服务，端口本身保留。
+FWD_ENABLE = os.environ.get("M7A_FWD_ENABLE", "0") != "0"
+
+# 转发兜底仍保留上游常量（FWD_ENABLE=1 时使用），默认不走。
 PHP_UPSTREAM = os.environ.get("M7A_PHP_UPSTREAM", "http://127.0.0.1:9999")
 FWD_HEADER = "X-M7A-Fwd"
 FWD_HEADER_VALUE = "1"
+
+# ===== 告警状态机增强（重试 / 退避 / 去重）=====
+ALERT_RETRY_DELAYS = (30, 60, 120)   # 推送失败后的指数退避重试间隔（秒），最多 3 次
+ALERT_MAX_RETRY = len(ALERT_RETRY_DELAYS)
+ALERT_BACKOFF_STREAK = 3             # 连续失败达到该次数进入冷静期
+ALERT_BACKOFF_SECONDS = 300          # 冷静期时长（秒），期内不再推送、仅记事件
+ALERT_DEDUP_WINDOW = 120             # 同 kind 告警去重窗口（秒），窗口内不重复推送
 
 # ===== 服务监听 =====
 LISTEN_HOST = os.environ.get("M7A_LISTEN_HOST", "127.0.0.1")
