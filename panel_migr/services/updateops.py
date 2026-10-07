@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 import shutil
+import sys
 import time
 import zipfile
 from pathlib import Path
@@ -372,7 +374,9 @@ def _swap_stage(stage: Path, old: Path) -> None:
     """stage 内一级条目换入面板目录；被替换的条目移入 old 供失败回滚。
     data/ backups/ 等运行数据永不触碰。
     v1.21.1：现有 .venv 运行环境先摘出暂存、换入后放回——此前它随旧目录进入
-    old 会被回滚清理一并删掉，导致面板进程起不来（203/EXEC 循环）。"""
+    old 会被回滚清理一并删掉，导致面板进程起不来（203/EXEC 循环）。
+    v1.22.1：暂存/放回改用 lexists 判断，避免 .venv 为符号链接时被静默丢弃；
+    stash 一旦建立就必须放回，放回失败直接抛异常（交由上层回滚，不再静默跳过）。"""
     old.mkdir(parents=True, exist_ok=True)
     venv_kept: list[Path] = []
     for item in sorted(stage.iterdir()):
@@ -381,15 +385,22 @@ def _swap_stage(stage: Path, old: Path) -> None:
         dest = cfg.BASE_DIR / item.name
         stash = None
         src_venv = dest / ".venv"
-        if dest.is_dir() and src_venv.is_dir():
+        if dest.is_dir() and os.path.lexists(src_venv):
             stash = old / f".venv_stash_{item.name}"
-            if stash.exists():
-                shutil.rmtree(stash, ignore_errors=True)
+            if os.path.lexists(stash):
+                if stash.is_dir() and not stash.is_symlink():
+                    shutil.rmtree(stash, ignore_errors=True)
+                else:
+                    stash.unlink()
             shutil.move(str(src_venv), str(stash))
-        if dest.exists():
+        # lexists：dest 是指向别处的符号链接时也要先移走，不能静默跳过
+        if os.path.lexists(dest):
             shutil.move(str(dest), str(old / item.name))
         shutil.move(str(item), str(dest))
-        if stash is not None and stash.exists():
+        if stash is not None:
+            # stash 已建立：必须放回，失败即抛异常触发回滚（绝不静默丢弃运行环境）
+            if not os.path.lexists(stash):
+                raise RuntimeError(f"暂存的 .venv 丢失，无法放回：{item.name}")
             shutil.move(str(stash), str(dest / ".venv"))
             venv_kept.append(dest)
     for d in venv_kept:
@@ -408,22 +419,137 @@ def _venv_pip_sync(dest: Path) -> None:
         pass
 
 
+# 依赖安装回退源（默认源失败时用）
+PIP_MIRROR = "https://pypi.tuna.tsinghua.edu.cn/simple"
+
+
+def _runtime_python_ok(venv_dir: Path) -> bool:
+    """运行环境是否可用：<venv>/bin/python 存在且有可执行权限。"""
+    py = venv_dir / "bin" / "python"
+    try:
+        return py.is_file() and os.access(py, os.X_OK)
+    except OSError:
+        return False
+
+
+def _ensure_runtime(runner=None, base_dir: Path | None = None) -> dict:
+    """校验 / 重建面板运行环境（panel_migr/.venv）。
+
+    v1.22.1：更新包不含 .venv，若更新开始前运行环境已缺失，换入新代码后
+    systemd 会因找不到 panel_migr/.venv/bin/python 报 203/EXEC 反复重启。
+    这里在换入后做兜底校验：缺失或不可执行则就地重建并装依赖。
+
+    - 优先用当前解释器 sys.executable（已在跑，最贴近原环境）；
+    - 不可用则回退 python3 -m venv；
+    - pip 默认源失败回退清华源；
+    - 全程不吞错误：命令返回码与输出都带进 msg。
+
+    runner 可注入（测试用），签名 runner(cmd, timeout) -> {"code","out"}；
+    默认用 services.shell.run_cmd。
+    """
+    run = runner or run_cmd
+    base = Path(base_dir if base_dir is not None else cfg.BASE_DIR)
+    venv_dir = base / "panel_migr" / ".venv"
+    req = base / "panel_migr" / "requirements.txt"
+
+    if _runtime_python_ok(venv_dir):
+        return {"ok": True, "rebuilt": False, "msg": "运行环境就绪"}
+
+    # —— 需要重建 ——
+    log: list[str] = []
+    try:
+        venv_dir.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        return {"ok": False, "rebuilt": False,
+                "msg": f"运行环境目录不可创建：{e}"}
+
+    made = False
+    py_exe = getattr(sys, "executable", "") or ""
+    if py_exe:
+        r = run(f'"{py_exe}" -m venv "{venv_dir}"', 300)
+        if r.get("code") == 0 and _runtime_python_ok(venv_dir):
+            made = True
+        else:
+            log.append(f"用当前解释器创建 venv 失败：{r.get('out', '').strip()}")
+    if not made:
+        r = run(f'python3 -m venv "{venv_dir}"', 300)
+        if r.get("code") == 0 and _runtime_python_ok(venv_dir):
+            made = True
+        else:
+            log.append(f"python3 -m venv 失败：{r.get('out', '').strip()}")
+
+    if not made:
+        return {"ok": False, "rebuilt": False,
+                "msg": "运行环境重建失败（无法创建 venv）：" + "；".join(filter(None, log))}
+
+    # 装依赖：默认源 → 清华源回退
+    pip = venv_dir / "bin" / "pip"
+    if req.is_file():
+        r = run(f'"{pip}" install -q -r "{req}"', 600)
+        if r.get("code") != 0:
+            log.append(f"默认源安装失败：{r.get('out', '').strip()}")
+            r2 = run(f'"{pip}" install -q -r "{req}" -i {PIP_MIRROR}', 600)
+            if r2.get("code") != 0:
+                log.append(f"镜像源安装失败：{r2.get('out', '').strip()}")
+    else:
+        log.append(f"未找到依赖清单 {req}，跳过依赖安装")
+
+    if not _runtime_python_ok(venv_dir):
+        return {"ok": False, "rebuilt": True,
+                "msg": "运行环境重建后校验仍失败：" + "；".join(filter(None, log))}
+
+    if log:
+        return {"ok": True, "rebuilt": True,
+                "msg": "运行环境已重建（部分步骤有提示）：" + "；".join(filter(None, log))}
+    return {"ok": True, "rebuilt": True, "msg": "运行环境已重建"}
+
+
 def _restore_old(old: Path) -> None:
-    """回滚：把 old 里的原条目移回面板目录（覆盖换入失败的新条目）。"""
+    """回滚：把 old 里的原条目移回面板目录（覆盖换入失败的新条目）。
+    v1.22.1：换入成功时 .venv 已放回新目录，回滚若直接 rmtree 新目录会连带删掉运行
+    环境（面板下次重启即 203/EXEC）。因此先把当前 .venv 救出暂存、普通条目恢复完再
+    放回；救出槽位放在 old 同级，即使放回失败也不会随 old 被清理掉。"""
     if not old.is_dir():
         return
     items = sorted(old.iterdir())
+    rescue = old.parent / (old.name + ".venvrescue")
+    rescued: list = []
     for item in items:
         if item.name.startswith(".venv_stash_"):
             continue
         dest = cfg.BASE_DIR / item.name
+        cur_venv = dest / ".venv"
+        if os.path.lexists(cur_venv):
+            try:
+                rescue.mkdir(parents=True, exist_ok=True)
+                slot = rescue / item.name
+                if os.path.lexists(slot):
+                    if slot.is_dir() and not slot.is_symlink():
+                        shutil.rmtree(slot, ignore_errors=True)
+                    else:
+                        slot.unlink()
+                shutil.move(str(cur_venv), str(slot))
+                rescued.append((item.name, slot))
+            except OSError:
+                pass
         try:
-            if dest.exists():
+            if os.path.lexists(dest):
                 if dest.is_dir() and not dest.is_symlink():
                     shutil.rmtree(dest, ignore_errors=True)
                 else:
                     dest.unlink()
             shutil.move(str(item), str(dest))
+        except OSError:
+            pass
+    # 放回救出的运行环境（恢复后的目录里没有 .venv 时才补）
+    for name, slot in rescued:
+        target = cfg.BASE_DIR / name
+        try:
+            if not target.exists():
+                target.mkdir(parents=True, exist_ok=True)
+            venv_dst = target / ".venv"
+            if not os.path.lexists(venv_dst) and os.path.lexists(slot):
+                shutil.move(str(slot), str(venv_dst))
         except OSError:
             pass
     # v1.21.1：普通条目恢复完后，把暂存的 .venv 放回对应目录（回滚后运行环境不丢）
@@ -436,10 +562,16 @@ def _restore_old(old: Path) -> None:
             if not target.exists():
                 target.mkdir(parents=True, exist_ok=True)
             venv_dst = target / ".venv"
-            if not venv_dst.exists() and item.exists():
+            if not os.path.lexists(venv_dst) and os.path.lexists(item):
                 shutil.move(str(item), str(venv_dst))
         except OSError:
             pass
+    # 空壳 rescue 目录清理（仍有残留槽位则保留，便于人工恢复）
+    try:
+        if rescue.is_dir() and not any(rescue.iterdir()):
+            rescue.rmdir()
+    except OSError:
+        pass
 
 
 def _cleanup_dirs(*dirs: Path) -> None:
@@ -463,16 +595,25 @@ def _schedule_restart() -> str:
 
 
 def _apply_zip(data: bytes, expect_ver: str) -> dict:
-    """校验 → 备份 → 解压换入 → 版本复核；任一步失败自动回滚。"""
+    """校验 → 备份 → 解压换入 → 版本复核 → 运行环境兜底；任一步失败自动回滚。
+
+    v1.22.1：版本复核通过后再校验/重建 panel_migr/.venv，失败走与版本复核失败
+    完全相同的回滚路径（否则新代码换入但运行环境缺失 → 203/EXEC 起不来）。
+    """
     ts = time.strftime("%Y%m%d%H%M%S")
     stage = backups_dir() / f".stage_{ts}"
     old = backups_dir() / f".old_{ts}"
+    rebuilt = False
     try:
         _extract_zip(data, stage)
         _swap_stage(stage, old)
         cur = _installed_version()
         if cur != expect_ver:
             raise RuntimeError(f"换入后版本校验失败（读到 {cur or '空'}，应为 {expect_ver}）")
+        rt = _ensure_runtime()
+        if not rt.get("ok"):
+            raise RuntimeError(rt.get("msg") or "运行环境校验失败")
+        rebuilt = bool(rt.get("rebuilt"))
     except Exception as e:
         try:
             _restore_old(old)
@@ -481,7 +622,7 @@ def _apply_zip(data: bytes, expect_ver: str) -> dict:
         _cleanup_dirs(stage, old)
         return {"ok": False, "msg": f"更新失败已回滚：{e}"}
     _cleanup_dirs(stage, old)
-    return {"ok": True, "msg": ""}
+    return {"ok": True, "msg": "", "rebuilt": rebuilt}
 
 
 def do_update() -> dict:
@@ -528,8 +669,9 @@ def do_update() -> dict:
             if not res["ok"]:
                 return res
             tail = _schedule_restart()
+            rt_tip = "，运行环境已重建" if res.get("rebuilt") else ""
             return {"ok": True,
-                    "msg": (f"已更新到 v{newver}（来源：{src}，资产 {asset}）{tail}；"
+                    "msg": (f"已更新到 v{newver}（来源：{src}，资产 {asset}）{tail}{rt_tip}；"
                             f"旧版本已备份为 {Path(bak).name}")}
 
     # —— 旧版回退：PHP release 的 index.php 流程（行为与旧版一致）——

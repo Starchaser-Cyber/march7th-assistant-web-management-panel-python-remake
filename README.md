@@ -4,8 +4,8 @@
 
 ![许可证](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Python 版本](https://img.shields.io/badge/python-3.11%2B-green)
-![最新版本](https://img.shields.io/badge/version-V1.22-orange)
-![构建状态](https://img.shields.io/badge/build-202%20tests%20passing-brightgreen)
+![最新版本](https://img.shields.io/badge/version-V1.22.1-orange)
+![构建状态](https://img.shields.io/badge/build-214%20tests%20passing-brightgreen)
 ![Stars](https://img.shields.io/github/stars/Starchaser-Cyber/march7th-assistant-web-management-panel-python-remake?style=flat)
 
 ## 项目详细介绍
@@ -18,7 +18,7 @@
 
 - ✅ 适配已部署 Docker 版小助手的玩家；还没部署的，先按下方 [快速开始](#-快速开始--部署教程) 从零搞定（约 20 分钟）
 - ✅ 纯 Python 依赖、文件存储（JSON + SQLite 事件库），**无需数据库**，开箱即用
-- ✅ 202 个 pytest 自动化测试、`routers` / `services` 清晰分层，方便二次开发
+- ✅ 214 个 pytest 自动化测试、`routers` / `services` 清晰分层，方便二次开发
 - ✅ 手机、电脑浏览器均可使用
 
 ## ✨ 核心特性
@@ -65,7 +65,7 @@
 - **WebSocket 事件流**：日志、监控、告警实时推送，页面无需刷新
 - **systemd 常驻**：`Restart=always` 崩溃自动重启、开机自启；默认仅监听 `127.0.0.1`
 - **可靠数据落盘**：监控数据原子写（临时文件 + `os.replace`），杜绝并发写坏 JSON
-- **可测试**：pytest 回归 `202 passed, 3 skipped`，路由层与业务层分离
+- **可测试**：pytest 回归 `214 passed, 3 skipped`，路由层与业务层分离
 
 ## 界面预览 / 效果展示
 
@@ -491,7 +491,7 @@ journalctl -u m7a-panel -f      # 实时查看面板日志
     ├── templates/panel.html.j2    #   Jinja2 页面模板
     ├── static/                    #   前端 CSS / JS
     ├── scripts/                   #   辅助脚本
-    └── tests/                     #   pytest 测试（202 用例）
+    └── tests/                     #   pytest 测试（214 用例）
 ```
 
 > `.panel_pass.php`、`.env`、`data/`、`sessions/`、`backups/`、`*.log` 等运行时与敏感文件已被 `.gitignore` 排除，不会进入版本库。
@@ -622,6 +622,20 @@ python3 -m venv .venv
 再次感谢每一位贡献者的审阅与建议！
 
 ## 更新日志（Changelog）
+
+## V1.22.1（2026-10-07）
+
+**一句话总结**：给「一键更新」上双保险——换入前后都校验面板运行环境，缺失自动重建、失败自动回滚，并修掉回滚时可能连带删掉运行环境的隐患。
+
+🐛 修复
+
+- 一键更新不再把面板更新成打不开：更新包里不含 Python 运行环境，若服务器上的 `panel_migr/.venv` 此前已丢失或损坏，换入新代码后进程会反复以 203/EXEC 启动失败。现在换入并校验版本通过后，会自动检查运行环境是否可用，不可用就地重建并安装依赖（默认源安装失败自动回退国内镜像源）；重建不成功则直接回滚到旧版本且**不重启**——升级失败也不会让面板挂掉
+- 回滚不再误删运行环境：回滚时先把当前 `.venv` 安全救出到独立暂存位、把旧版本文件恢复完再放回，避免"回滚成功但面板起不来"；暂存位独立存放，不会随回滚清理一起被删
+- `.venv` 是符号链接时不再被静默丢弃：暂存、放回、换入的存在性判断统一改用 `lexists`，链接形态的运行环境同样原样保留；暂存一旦建立就必须放回，放不回直接抛错触发回滚，绝不静默跳过
+
+📝 其他
+
+- 版本号升级 1.22.1，自动化测试增至 214 项（新增 v1.22.1 加固用例与回滚保环境用例）
 
 ### V1.22（2026-10-07）
 
