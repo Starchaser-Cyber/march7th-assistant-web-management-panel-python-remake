@@ -15,6 +15,8 @@ from services import history as hist
 from services import logs as lg
 from services import monitor as mon
 from services import eventdb
+from services import outcome as oc_mod
+from services import stats as stats_mod
 from services.instances import instance_current
 from services.shell import run_cmd
 
@@ -164,6 +166,35 @@ def h_history(request):
     })
 
 
+def h_outcome_daily(request):
+    """GET ?ajax=outcome_daily&days=7 → 任务收益日报（v1.23 M1-1）。
+
+    days 取值 1..30（默认 7）。返回今日卡 + 逐日列表，数据源 events(type="outcome")。
+    """
+    inst = _inst(request)
+    qp = request.query_params
+    try:
+        days = int(qp.get("days") or 7)
+    except (TypeError, ValueError):
+        days = 7
+    data = oc_mod.outcome_daily(inst, days)
+    return JSONResponse({"ok": True, **data})
+
+
+def h_task_stats(request):
+    """GET ?ajax=task_stats&days=30 → 按任务维度的成功率统计（v1.23 M1-2）。
+
+    days 取值 1..30（默认 30）。
+    """
+    inst = _inst(request)
+    qp = request.query_params
+    try:
+        days = int(qp.get("days") or 30)
+    except (TypeError, ValueError):
+        days = 30
+    return JSONResponse(stats_mod.task_success_stats(inst, days))
+
+
 GET_HANDLERS = {
     "status": h_status,
     "log": h_log,
@@ -171,4 +202,6 @@ GET_HANDLERS = {
     "monitor": h_monitor,
     "monitor_range": h_monitor_range,
     "history": h_history,
+    "outcome_daily": h_outcome_daily,
+    "task_stats": h_task_stats,
 }

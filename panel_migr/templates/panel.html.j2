@@ -172,6 +172,8 @@
             <button type="button" class="btn small" data-range="1m" onclick="setMonRange('1m')">近1分钟</button>
             <button type="button" class="btn small active" data-range="1h" onclick="setMonRange('1h')">近1小时</button>
             <button type="button" class="btn small" data-range="1d" onclick="setMonRange('1d')">近1天</button>
+            <button type="button" class="btn small" data-range="7d" onclick="setMonRange('7d')">近7天</button>
+            <button type="button" class="btn small" data-range="30d" onclick="setMonRange('30d')">近30天</button>
             <button type="button" class="btn small" data-range="custom" onclick="setMonRange('custom')">自定义</button>
           </span>
           <select id="monInterval" onchange="setMonitorInterval(this.value)" style="margin-left:auto;font-size:12px;padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:var(--card2);color:var(--text);">
@@ -183,6 +185,7 @@
             <option value="60"{{ (' selected' if _monIv == 60 else '') }}>60秒</option>
           </select>
           <button class="btn small gray" onclick="loadMonitor(true)" style="margin-left:8px;">立即刷新</button>
+          <button class="btn small gray" style="margin-left:6px;" onclick="exportData('monitor')" title="导出资源监控归档（CSV）">⬇️ 导出</button>
         </h2>
         <div class="mon-custom" id="monCustomBox" style="display:none;">
           <input type="datetime-local" id="monFrom" class="mon-custom-in" aria-label="开始时间">
@@ -203,6 +206,27 @@
         <div class="mon-chart" id="monChart"><div style="text-align:center;color:var(--muted);padding-top:110px;font-size:13px;">图表加载中…（首次采样约需 1 秒）</div></div>
         <div class="mon-host" id="monHost"></div>
         <p class="tip mon-tip" style="margin:10px 0 0;">实时采样：打开面板时每 <span id="monIvText">{{ _monIv }}</span> 秒自动采样；想不打开面板也有曲线，在宝塔「计划任务」添加 Shell 脚本每 1 分钟执行：<code id="monCronCmd">{{ _monCron }}</code><br><span style="color:var(--muted);font-size:12px;">提示：命令中的 IP 地址会自动取你当前访问面板的地址；如果服务器实际 IP 与此不同（例如用域名访问、内网/外网 IP 不一致），请把命令里的 IP 改成你服务器的实际 IP。</span></p>
+      </div>
+
+      <!-- v1.23：任务收益日报 -->
+      <div class="card" id="outcomeCard">
+        <h2><span class="icon">🧾</span> 任务收益日报
+          <span class="oc-range" style="margin-left:10px;">
+            <button type="button" class="btn small active" data-days="7" onclick="setOutcomeDays(7)">近7天</button>
+            <button type="button" class="btn small" data-days="14" onclick="setOutcomeDays(14)">近14天</button>
+            <button type="button" class="btn small" data-days="30" onclick="setOutcomeDays(30)">近30天</button>
+          </span>
+          <button class="btn small gray" style="margin-left:auto;" onclick="loadOutcome(true)">立即刷新</button>
+        </h2>
+        <div class="oc-today" id="ocToday">
+          <div class="oc-item"><div class="oc-label">今日任务</div><div class="oc-value" id="ocTasks">--</div></div>
+          <div class="oc-item"><div class="oc-label">实训得分</div><div class="oc-value" id="ocScore">--</div></div>
+          <div class="oc-item"><div class="oc-label">副本挑战</div><div class="oc-value" id="ocDungeon">--</div></div>
+          <div class="oc-item"><div class="oc-label">开拓力</div><div class="oc-value" id="ocStamina">--</div></div>
+        </div>
+        <div class="oc-net" id="ocNet"></div>
+        <div class="oc-bars" id="ocBars"></div>
+        <p class="tip" style="margin:10px 0 0;">每次任务结束后，面板会从本体日志里提取开拓力、副本挑战次数、每日实训得分与玩法完成情况，按天归档到 <code>data/panel_events.db</code>。<br><span style="color:var(--muted);font-size:12px;">日志里没有出现的指标会显示为 --；日志格式变化只会少统计几项，不影响任务本身。</span></p>
       </div>
 
       <!-- v1.18：异常告警 -->
@@ -230,6 +254,7 @@
           <button type="button" class="btn green" onclick="saveAlert()">💾 保存设置</button>
           <button type="button" class="btn gray" onclick="testAlert()">📤 发送测试</button>
           <button type="button" class="btn gray" onclick="toggleAlertHist()">📋 历史</button>
+          <button type="button" class="btn gray" onclick="exportData('alerts')" title="导出告警事件（CSV）">⬇️ 导出</button>
         </div>
         <div id="alertHistBox" style="display:none;margin-top:8px;max-height:240px;overflow:auto;border-top:1px dashed var(--border);padding-top:6px;"></div>
 
@@ -368,8 +393,10 @@
         
         <h2><span class="icon">🕒</span> 任务历史
           <span class="badge" id="histStat" style="background:var(--primary-soft);color:var(--primary);">今日执行 {{ (histToday['count'])|int }} 次 · 成功 {{ (histToday['ok'])|int }} 次</span>
-          <button class="btn small gray" style="margin-left:auto;" onclick="clearHistory()">🗑️ 清空历史</button>
+          <button class="btn small gray" style="margin-left:auto;" onclick="exportData('history')" title="导出任务历史（CSV）">⬇️ 导出</button>
+          <button class="btn small gray" onclick="clearHistory()">🗑️ 清空历史</button>
         </h2>
+        <div class="oc-stats" id="taskStats"></div>
         <div class="hist-week" id="histWeek"></div>
         <div class="hist-table-wrap">
           <table class="hist-table">

@@ -70,8 +70,8 @@ function switchTab(name) {
   if (panel) panel.classList.add('active');
   try { localStorage.setItem('m7a_tab', name); } catch(e) {}
   if (name === 'log') refreshLog();
-  if (name === 'tasks') loadHistory();
-  if (name === 'overview') refreshStatus();
+  if (name === 'tasks') { loadHistory(); loadTaskStats(); }
+  if (name === 'overview') { refreshStatus(); loadOutcome(true); }
   closeSidebar();
 }
 // Restore tab
@@ -391,6 +391,88 @@ function clearHistory() {
     }).catch(function(){ alert('❌ 网络错误'); });
 }
 
+/* ===== v1.23 M1-1：任务收益日报 ===== */
+var _ocDays = 7;
+function setOutcomeDays(n) {
+  _ocDays = n;
+  var btns = document.querySelectorAll('.oc-range .btn');
+  for (var i = 0; i < btns.length; i++) {
+    btns[i].className = 'btn small' + (parseInt(btns[i].getAttribute('data-days'), 10) === n ? ' active' : '');
+  }
+  loadOutcome(true);
+}
+function loadOutcome(force) {
+  var card = document.getElementById('outcomeCard');
+  if (!card) return;
+  fetch('?ajax=outcome_daily&days=' + _ocDays)
+    .then(function(r){ return r.json(); })
+    .then(function(d){ if (d && d.ok) renderOutcome(d); })
+    .catch(function(){});
+}
+function renderOutcome(d) {
+  var t = d.today || {};
+  var setV = function(id, txt) { var e = document.getElementById(id); if (e) e.textContent = txt; };
+  setV('ocTasks', (t.tasks || 0) + ' 次');
+  setV('ocScore', (t.score || 0) + ' 分');
+  setV('ocDungeon', (t.dungeon || 0) + ' 次');
+  setV('ocStamina', (t.stamina != null)
+      ? (t.stamina + (t.stamina_total ? ' / ' + t.stamina_total : ''))
+      : '--');
+  var net = document.getElementById('ocNet');
+  if (net) {
+    var bits = [];
+    if (t.modes && t.modes.length) bits.push('🎯 已完成：' + t.modes.join('、'));
+    if (t.notes && t.notes.length) bits.push('🎁 ' + t.notes.slice(0, 3).join('；'));
+    if (d.week) bits.push('📅 近' + (d.range_days || _ocDays) + '天累计 ' + d.week.tasks + ' 次任务 · ' + d.week.score + ' 分');
+    net.innerHTML = bits.length ? bits.map(function(s){ return '<span>' + escapeHtml(s) + '</span>'; }).join('')
+                                : '<span style="color:var(--muted);">今天还没有任务收益记录，跑一次任务后这里会自动生成。</span>';
+  }
+  var bars = document.getElementById('ocBars');
+  if (!bars) return;
+  var list = d.list || [];
+  var max = 1;
+  list.forEach(function(x){ if (x.score > max) max = x.score; if (x.tasks > max) max = x.tasks; });
+  bars.innerHTML = list.map(function(x) {
+    var h = x.tasks ? Math.max(6, Math.round((x.score || x.tasks) / max * 54)) : 4;
+    var tip = x.key + '：任务 ' + x.tasks + ' 次，实训 ' + x.score + ' 分'
+      + (x.dungeon ? '，副本 ' + x.dungeon + ' 次' : '');
+    return '<div class="oc-col' + (x.today ? ' today' : '') + '" title="' + escapeHtml(tip) + '">'
+      + '<span class="oc-num">' + (x.tasks || '') + '</span>'
+      + '<div class="oc-bar' + (x.tasks ? '' : ' oc-zero') + '" style="height:' + h + 'px"></div>'
+      + '<span class="oc-day' + (x.today ? ' today' : '') + '">' + escapeHtml(x.date) + '</span></div>';
+  }).join('');
+}
+/* ===== v1.23 M1-2：任务成功率统计 ===== */
+function loadTaskStats() {
+  var box = document.getElementById('taskStats');
+  if (!box) return;
+  fetch('?ajax=task_stats&days=30')
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d || !d.ok || !d.has_data) { box.innerHTML = ''; return; }
+      var head = '<div class="oc-stat-head">近 ' + d.days + ' 天：共执行 <b>' + d.total
+        + '</b> 次 · 成功 <b>' + d.done + '</b> 次 · 成功率 <b>' + d.rate + '%</b></div>';
+      var rows = d.items.map(function(x) {
+        var cls = x.rate >= 90 ? 'ok' : (x.rate >= 60 ? 'warn' : 'bad');
+        return '<div class="oc-stat-row" title="平均耗时 ' + escapeHtml(x.avg_duration_str || '--')
+          + '，最近 ' + escapeHtml(x.last_str || '--') + '">'
+          + '<span class="oc-stat-name">' + escapeHtml(x.task_label || x.task_key) + '</span>'
+          + '<span class="oc-stat-num">' + x.done + '/' + x.total + '</span>'
+          + '<span class="oc-stat-bar"><i class="' + cls + '" style="width:' + Math.max(2, x.rate) + '%"></i></span>'
+          + '<span class="oc-stat-rate ' + cls + '">' + x.rate + '%</span>'
+          + '</div>';
+      }).join('');
+      box.innerHTML = head + '<div class="oc-stat-list">' + rows + '</div>';
+    })
+    .catch(function(){});
+}
+/* ===== v1.23 M1-4：数据导出 ===== */
+function exportData(what) {
+  var days = { history: 90, alerts: 30, monitor: 7 };
+  var d = days[what] || 30;
+  miniToast('正在生成导出文件…');
+  window.location.href = '?export=' + encodeURIComponent(what) + '&days=' + d;
+}
 /* ===== 资源监控（v1.13+） ===== */
 var _monChart = null;
 var _monTimer = null;
@@ -489,7 +571,7 @@ function renderMonitor(d) {
       '<span class="mon-host-row">内存 <b>' + fmtBytes(h.memTotal||0) + '</b></span>' +
       '<span class="mon-host-row">磁盘 <b>' + fmtBytes(h.diskUsed||0) + ' / ' + fmtBytes(h.diskTotal||0) + '</b></span>';
   }
-  if (window.echarts && _monRange !== 'custom') {
+  if (window.echarts && _monRange !== 'custom' && _monRange !== '7d' && _monRange !== '30d') {
     if (!_monChart) {
       var box = document.getElementById('monChart');
       if (box) { box.innerHTML = ''; _monChart = echarts.init(box); }
@@ -527,8 +609,20 @@ function setMonRange(r) {
   if (cbox) cbox.style.display = (r === 'custom') ? '' : 'none';
   var note = document.getElementById('monSrcNote');
   if (r === 'custom') { monCustomInit(); return; }
+  if (r === '7d' || r === '30d') { queryMonPreset(r === '7d' ? 7 : 30); return; }
   if (note) note.style.display = 'none';
   loadMonitor(true);
+}
+/* v1.23 M1-3：长周期曲线档位（7/30 天），复用 monitor_range 区间查询与同一张图表 */
+function queryMonPreset(days) {
+  var to = Math.floor(Date.now() / 1000);
+  var from = to - days * 86400;
+  var note = document.getElementById('monSrcNote');
+  if (note) { note.style.display = ''; note.textContent = '查询中…'; }
+  fetch('?ajax=monitor_range&from=' + from + '&to=' + to)
+    .then(function(r){ return r.json(); })
+    .then(function(d){ renderMonRange(d, from, to); })
+    .catch(function(){ if (note) { note.style.display = ''; note.textContent = '网络错误，请重试'; } });
 }
 function loadMonitor() {
   var iv = parseInt(document.getElementById('monInterval').value) || 1;
@@ -1560,7 +1654,11 @@ function evHandle(m) {
   var p = m.payload || {};
   if (m.type === 'monitor') { evThrottle('mon', loadMonitor, 2000); return; }
   if (m.type === 'log') { if (evCurTab() === 'log') evThrottle('log', refreshLog, 400); return; }
-  if (m.type === 'history') { if (evCurTab() === 'tasks') evThrottle('hist', loadHistory, 600); return; }
+  if (m.type === 'history') {
+    if (evCurTab() === 'tasks') evThrottle('hist', loadHistory, 600);
+    if (evCurTab() === 'overview') evThrottle('ocDaily', function(){ loadOutcome(true); }, 1500);
+    return;
+  }
   if (m.type === 'alert') {
     miniToast('⚠️ ' + (p.title || '收到告警'));
     alertTlPrepend(p, m.ts);  /* v1.22：历史面板打开时实时插入时间轴顶部并高亮 */
@@ -1617,6 +1715,9 @@ startAutoRefresh();
 initLogExport();
 loadECharts(function(){ loadMonitor(); });
 startMonitor();
+/* v1.23 M1：收益日报 + 成功率统计（首屏在概览页，任务页切过去时再拉） */
+loadOutcome(true);
+setTimeout(loadTaskStats, 600);
 /* v1.18：搜索输入绑定 + 全局快捷键 + 告警巡检心跳 */
 (function() {
   var inp = document.getElementById('searchInput');

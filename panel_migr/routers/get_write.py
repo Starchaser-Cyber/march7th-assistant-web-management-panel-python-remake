@@ -200,6 +200,154 @@ def h_alerter(request) -> Response:
     return JSONResponse(alert_tick(inst, True))
 
 
+# ===== v1.23 M1-4：数据导出（CSV / JSON，需登录）=====
+
+
+def _export_days(request, default: int = 30, cap: int = 180) -> int:
+    try:
+        d = int(request.query_params.get("days") or default)
+    except (TypeError, ValueError):
+        d = default
+    return max(1, min(d, cap))
+
+
+def _wants_json(request) -> bool:
+    return str(request.query_params.get("format") or "").strip().lower() == "json"
+
+
+def _csv_text(header: list, rows: list) -> str:
+    """生成 CSV 文本（带 UTF-8 BOM，Excel 直接双击不乱码）。"""
+    def _cell(v) -> str:
+        s = "" if v is None else str(v)
+        if any(ch in s for ch in (",", '"', "\n", "\r")):
+            return '"' + s.replace('"', '""') + '"'
+        return s
+
+    lines = [",".join(_cell(c) for c in header)]
+    for r in rows:
+        lines.append(",".join(_cell(c) for c in r))
+    return "\ufeff" + "\r\n".join(lines) + "\r\n"
+
+
+def _export_response(request, header: list, rows: list, base: str, payload: dict):
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    if _wants_json(request):
+        return JSONResponse({"ok": True, "header": header, "rows": rows, **payload})
+    return Response(
+        content=_csv_text(header, rows),
+        media_type="text/csv; charset=utf-8",
+        headers={"content-disposition": f'attachment; filename="{base}_{ts}.csv"'},
+    )
+
+
+def h_export_history(request) -> Response:
+    """?export=history&days=90[&format=json] → 任务历史 CSV（含状态、耗时与收益摘要）。
+
+    数据源优先 SQLite 历史事件（覆盖天数/条数都更大），无事件时回退 history JSON，
+    保证老版本升级上来也能导出。
+    """
+    from services import eventdb
+    from services.history import history_read, outcome_summary
+    from services.instances import instance_container
+
+    inst = _inst(request)
+    days = _export_days(request, 90, 365)
+    now = int(time.time())
+    frm = now - days * 86400
+    sid = str(inst.get("id") or inst.get("container") or "")
+
+    items, source = [], "events"
+    for e in eventdb.list_events("history", 50000, frm=frm, to=now):
+        if str(e.get("inst") or "") != sid:
+            continue
+        items.append(e)
+    if not items:
+        source = "history.json"
+        for it in (history_read(inst).get("items") or []):
+            if isinstance(it, dict) and int(it.get("start_ts") or 0) >= frm:
+                items.append(it)
+    items.sort(key=lambda x: int(x.get("start_ts") or x.get("ts") or 0))
+
+    st_map = {"done": "已完成", "aborted": "已中断", "running": "运行中"}
+    header = ["开始时间", "结束时间", "任务", "任务标识", "实例", "状态", "耗时(秒)", "退出码", "收益摘要"]
+    rows = []
+    for it in items:
+        start = int(it.get("start_ts") or it.get("ts") or 0)
+        end = int(it.get("end_ts") or 0)
+        if not start:
+            continue
+        st = str(it.get("status") or "running")
+        rows.append([
+            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start)),
+            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(end)) if end else "",
+            str(it.get("task_label") or ""),
+            str(it.get("task_key") or ""),
+            str(it.get("instance") or instance_container(inst)),
+            st_map.get(st, st),
+            max(0, (end or now) - start),
+            it.get("exit", ""),
+            str(it.get("outcome_summary") or outcome_summary(it.get("outcome")) or ""),
+        ])
+    return _export_response(request, header, rows, "m7a_tasks",
+                            {"count": len(rows), "days": days, "source": source})
+
+
+def h_export_alerts(request) -> Response:
+    """?export=alerts&days=30[&format=json] → 告警事件 CSV。"""
+    from services import eventdb
+
+    inst = _inst(request)
+    days = _export_days(request, 30, 365)
+    now = int(time.time())
+    frm = now - days * 86400
+    sid = str(inst.get("id") or inst.get("container") or "")
+    _kind = {"down": "离线告警", "recovered": "已恢复", "aborted": "任务中断"}
+    rows = []
+    for e in eventdb.list_events("alert", 20000, frm=frm, to=now):
+        if str(e.get("inst") or "") not in (sid, ""):
+            continue
+        tsv = int(e.get("ts") or 0)
+        rows.append([
+            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(tsv)) if tsv else "",
+            _kind.get(str(e.get("kind") or ""), str(e.get("kind") or "")),
+            str(e.get("inst") or ""),
+            str(e.get("title") or e.get("text") or ""),
+            str(e.get("body") or e.get("msg") or ""),
+        ])
+    return _export_response(request, ["时间", "类型", "实例", "标题", "内容"], rows,
+                            "m7a_alerts", {"count": len(rows), "days": days})
+
+
+def h_export_monitor(request) -> Response:
+    """?export=monitor&days=7[&format=json] → 资源监控归档 CSV。
+
+    区间 ≤2 小时导原始采样点，>2 小时导分钟聚合（与图表口径一致）。
+    """
+    from services import eventdb
+
+    inst = _inst(request)
+    days = _export_days(request, 7, 90)
+    now = int(time.time())
+    frm = now - days * 86400
+    sid = str(inst.get("id") or inst.get("container") or "")
+    bucket, pts = eventdb.query_range(sid, frm, now, max_points=200000)
+    raw = bucket == "raw"
+    header = (["时间", "CPU(%)", "内存(%)", "磁盘(%)", "下载(B/s)", "上传(B/s)", "负载", "容器运行"]
+              if raw else ["时间", "CPU(%)", "内存(%)", "磁盘(%)"])
+    rows = []
+    for p in pts:
+        tsv = int(p.get("t") or 0)
+        ts_txt = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(tsv)) if tsv else ""
+        if raw:
+            rows.append([ts_txt, p.get("cpu"), p.get("mem"), p.get("disk"),
+                         p.get("netIn"), p.get("netOut"), p.get("load"),
+                         "运行中" if p.get("running") else "已停止"])
+        else:
+            rows.append([ts_txt, p.get("cpu"), p.get("mem"), p.get("disk")])
+    return _export_response(request, header, rows, "m7a_monitor",
+                            {"count": len(rows), "days": days, "bucket": bucket})
+
+
 # ===== 注册表 =====
 
 # ajax 名 → 同步处理器（request）→ Response | dict（dict 自动包 JSON）
@@ -219,4 +367,7 @@ SPECIAL_GETS = [
     ("alerter", "1", False, h_alerter),
     ("download", "config", True, h_download_config),
     ("export_log", "1", True, h_export_log),
+    ("export", "history", True, h_export_history),
+    ("export", "alerts", True, h_export_alerts),
+    ("export", "monitor", True, h_export_monitor),
 ]

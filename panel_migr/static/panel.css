@@ -1074,3 +1074,41 @@ table.sched-table tr.sched-cal-hl { animation:schedRowHl 2.2s ease-out; }
   .alert-tl-new { animation:none; }
   table.sched-table tr.sched-cal-hl { animation:none; background:var(--primary-soft); }
 }
+
+/* ===== v1.23 M1：任务收益日报 + 成功率统计 ===== */
+.oc-range { display:inline-flex; gap:6px; flex-wrap:wrap; }
+.oc-today { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:12px 0 4px; }
+.oc-item { padding:12px 10px; border-radius:12px; text-align:center; background:var(--glass-bg); border:1px solid var(--glass-border); }
+.oc-label { font-size:11px; color:var(--muted); margin-bottom:6px; }
+.oc-value { font-size:20px; font-weight:700; color:var(--primary); line-height:1.2; }
+.oc-net { display:flex; flex-direction:column; gap:4px; margin:10px 0 2px; font-size:12px; color:var(--text); }
+.oc-net span { line-height:1.6; }
+.oc-bars { display:flex; gap:6px; align-items:flex-end; padding:10px 2px 2px; }
+.oc-col { flex:1; display:flex; flex-direction:column; align-items:center; gap:3px; min-width:0; }
+.oc-bar { width:60%; max-width:26px; border-radius:6px 6px 3px 3px; background:var(--grad); min-height:3px; }
+.oc-zero { background:var(--border); }
+.oc-num { font-size:10px; color:var(--muted); }
+.oc-day { font-size:10px; color:var(--muted); white-space:nowrap; transform:rotate(-45deg); transform-origin:center; margin-top:4px; }
+.oc-col.today .oc-num, .oc-day.today { color:var(--primary); font-weight:700; }
+.oc-stats { margin:10px 0 4px; padding:10px 12px; border-radius:12px; background:var(--glass-bg); border:1px solid var(--glass-border); }
+.oc-stats:empty { display:none; }
+.oc-stat-head { font-size:12px; color:var(--muted); margin-bottom:8px; }
+.oc-stat-head b { color:var(--primary); font-size:14px; }
+.oc-stat-list { display:flex; flex-direction:column; gap:6px; }
+.oc-stat-row { display:flex; align-items:center; gap:10px; font-size:12px; }
+.oc-stat-name { flex:none; width:88px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text); }
+.oc-stat-num { flex:none; width:56px; text-align:right; color:var(--muted); }
+.oc-stat-bar { flex:1; height:7px; border-radius:6px; background:var(--border); overflow:hidden; min-width:40px; }
+.oc-stat-bar i { display:block; height:100%; border-radius:6px; background:var(--grad); }
+.oc-stat-bar i.ok { background:linear-gradient(90deg,#34d399,#059669); }
+.oc-stat-bar i.warn { background:linear-gradient(90deg,#fbbf24,#f59e0b); }
+.oc-stat-bar i.bad { background:linear-gradient(90deg,#f87171,#dc2626); }
+.oc-stat-rate { flex:none; width:52px; text-align:right; font-weight:600; color:var(--muted); }
+.oc-stat-rate.ok { color:#059669; }
+.oc-stat-rate.warn { color:#d97706; }
+.oc-stat-rate.bad { color:#dc2626; }
+@media (max-width:640px) {
+  .oc-today { grid-template-columns:repeat(2,1fr); }
+  .oc-day { display:none; }
+  .oc-stat-name { width:64px; }
+}

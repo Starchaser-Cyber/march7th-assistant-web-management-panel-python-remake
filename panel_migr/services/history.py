@@ -59,6 +59,15 @@ def history_sync(inst: dict) -> dict:
         d["items"][i]["end_ts"] = end
         d["items"][i]["status"] = status
         d["items"][i]["exit"] = 0 if status == "done" else -1
+        try:
+            # v1.23 M1-1：任务收尾时解析本次收益（只读日志，失败不影响历史记录）
+            from services import outcome as _oc
+
+            oc = _oc.extract_for_task(inst, d["items"][i])
+            if oc:
+                d["items"][i]["outcome"] = oc
+        except Exception:
+            pass
         finished.append(d["items"][i])
 
     for i, it in enumerate(d["items"]):
@@ -88,17 +97,33 @@ def history_sync(inst: dict) -> dict:
     if changed:
         history_write(inst, d)
         try:
+            from services import eventdb as _edb
             from services import events as _ev
             _sid = str(inst.get("id") or inst.get("container") or "")
             for it in finished:
-                _ev.publish("history", {
+                payload = {
                     "id": int(it.get("id") or 0),
                     "task_key": str(it.get("task_key") or ""),
                     "task_label": str(it.get("task_label") or ""),
                     "status": str(it.get("status") or ""),
                     "exit": int(it.get("exit") or 0),
+                    # v1.23 M1-2：带上起止时间，成功率统计才能算平均耗时
+                    "start_ts": int(it.get("start_ts") or 0),
                     "end_ts": int(it.get("end_ts") or 0),
-                }, inst=_sid)
+                    # v1.23 M1：收益摘要随事件落库，导出与统计无需再读 JSON
+                    "outcome_summary": outcome_summary(it.get("outcome")),
+                }
+                _ev.publish("history", payload, inst=_sid)
+                oc = it.get("outcome")
+                if isinstance(oc, dict) and oc:
+                    # v1.23 M1-1：收益单独落一条事件，供日报按天聚合
+                    _edb.insert_event(int(it.get("end_ts") or 0), "outcome", _sid, {
+                        "id": payload["id"],
+                        "task_key": payload["task_key"],
+                        "task_label": payload["task_label"],
+                        "start_ts": payload["start_ts"],
+                        "outcome": oc,
+                    })
         except Exception:
             pass
     return d
@@ -120,6 +145,24 @@ _STATUS_MAP = {
 }
 
 
+def outcome_summary(oc) -> str:
+    """把收益结构压成一句话（v1.23 M1-1），供历史列表展示。"""
+    if not isinstance(oc, dict) or not oc:
+        return ""
+    bits = []
+    if oc.get("modes"):
+        bits.append("、".join(str(m) for m in oc["modes"][:2]))
+    if int(oc.get("dungeon") or 0) > 0:
+        bits.append(f"副本 {int(oc['dungeon'])} 次")
+    if int(oc.get("challenges") or 0) > 0:
+        bits.append(f"挑战 {int(oc['challenges'])} 次")
+    if int(oc.get("score") or 0) > 0:
+        bits.append(f"实训 +{int(oc['score'])} 分")
+    if int(oc.get("daily_done") or 0) > 0:
+        bits.append(f"日常 {int(oc['daily_done'])} 项")
+    return " · ".join(bits)
+
+
 def history_view(items: list) -> list:
     now = int(time.time())
     out = []
@@ -134,6 +177,7 @@ def history_view(items: list) -> list:
         else:
             dur = format_duration((end if end > 0 else start) - start)
         smap = _STATUS_MAP.get(st, {"label": st, "color": "var(--muted,#9ca3af)"})
+        oc = it.get("outcome")
         out.append({
             "id": int(it.get("id") or 0),
             "task_label": str(it.get("task_label") or ""),
@@ -142,6 +186,7 @@ def history_view(items: list) -> list:
             "status": st,
             "status_label": smap["label"],
             "status_color": smap["color"],
+            "outcome_summary": outcome_summary(oc),
             **({"exit": it["exit"]} if "exit" in it else {}),
         })
     return out
