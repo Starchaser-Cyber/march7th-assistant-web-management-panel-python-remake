@@ -367,27 +367,118 @@ def h_set_after_finish(request, form, session, sid):
     return J({"ok": False, "msg": r["msg"]})
 
 
+def _alert_channels(form) -> dict:
+    """v1.24：分级通道（留空 = 继承主通道）→ 面板配置键。"""
+    out = {}
+    for sev in ("info", "warn", "critical"):
+        v = str(form.get("alert_channel_" + sev) or "").strip()
+        out["alert_channel_" + sev] = v if v in ("bark", "serverchan", "webhook") else ""
+    return out
+
+
 def h_alert_save(request, form, session, sid):
     ch_map = ("bark", "serverchan", "webhook")
     en = "1" if form.get("alert_enable") else "0"
     ch = str(form.get("alert_channel") or "")
     ch = ch if ch in ch_map else "bark"
     tg = str(form.get("alert_target") or "").strip()
-    if panel_config_save({"alert_enable": en, "alert_channel": ch, "alert_target": tg}):
+
+    def _int(key, dft, lo, hi):
+        try:
+            n = int(str(form.get(key) or "").strip())
+        except (TypeError, ValueError):
+            n = int(dft)
+        return max(int(lo), min(int(hi), n))
+
+    # v1.24 M2-6：磁盘阈值（critical 必须比 warn 更严格，否则自动收一格）
+    dw = _int("disk_warn_percent", cfg.DISK_WARN_PERCENT, 1, 99)
+    dc = _int("disk_crit_percent", cfg.DISK_CRIT_PERCENT, 1, 99)
+    if dc >= dw:
+        dc = max(1, dw - 1)
+
+    # v1.24 M2-7：晨报时间（HH:MM，非法回落 08:00）
+    try:
+        hh, mm = [int(x) for x in str(form.get("morning_report_time") or "").split(":")[:2]]
+        if not (0 <= hh <= 23 and 0 <= mm <= 59):
+            raise ValueError
+    except (TypeError, ValueError):
+        hh, mm = 8, 0
+
+    mute = ",".join([s for s in ("info", "warn", "critical")
+                     if form.get("alert_mute_" + s)])
+    upd = {
+        "alert_enable": en,
+        "alert_channel": ch,
+        "alert_target": tg,
+        # v1.24 M2-5：分级静音（勾选的级别只记录不推送）
+        "alert_mute_levels": mute,
+        # v1.24 M2-6：磁盘预警
+        "disk_alert_enable": "1" if form.get("disk_alert_enable") else "0",
+        "disk_warn_percent": dw,
+        "disk_crit_percent": dc,
+        # v1.24 M2-7：每日晨报
+        "morning_report_enable": "1" if form.get("morning_report_enable") else "0",
+        "morning_report_time": f"{hh:02d}:{mm:02d}",
+        # v1.24 M2-8：上游本体更新提醒
+        "upstream_check_enable": "1" if form.get("upstream_check_enable") else "0",
+    }
+    upd.update(_alert_channels(form))
+    if panel_config_save(upd):
         return J({"ok": True, "msg": "告警设置已保存"})
     return J({"ok": False, "msg": "写入失败，请检查 .panel_config.php 权限"})
 
 
 def h_alert_test(request, form, session, sid):
+    """v1.24：支持按级别测试（severity=info/warn/critical）。"""
     ch_map = ("bark", "serverchan", "webhook")
     ch = str(form.get("alert_channel") or "")
+    sev = str(form.get("severity") or "warn")
+    if sev not in ("info", "warn", "critical"):
+        sev = "warn"
+    name = {"info": "提示", "warn": "警告", "critical": "严重"}[sev]
     ov = {
         "enable": True,
         "channel": ch if ch in ch_map else "bark",
         "target": str(form.get("alert_target") or "").strip(),
     }
-    r = alert_send("M7A 面板测试告警", "看到这条消息说明告警通道配置正确 ✅（来自面板测试）", ov)
+    r = alert_send(f"M7A 面板测试告警（{name}）",
+                   f"看到这条消息说明「{name}」级告警通道配置正确 ✅（来自面板测试）",
+                   ov, severity=sev)
     return J({"ok": bool(r.get("ok")), "msg": r.get("msg", "")})
+
+
+def h_morning_report_now(request, form, session, sid):
+    """v1.24 M2-7：立即发一份晨报（忽略时间/当日已发限制）。"""
+    from services.alerts import morning_report
+    r = morning_report(instance_current(session), force=True)
+    return J({"ok": bool(r.get("ok")), "msg": r.get("msg", "")})
+
+
+def h_upstream_check_now(request, form, session, sid):
+    """v1.24 M2-8：立即检查一次上游本体版本（有新版会推 warn 级提醒）。"""
+    from services.alerts import upstream_check
+    r = upstream_check(instance_current(session), force=True)
+    if r.get("error"):
+        msg = f"检查失败：{r['error']}"
+    elif r.get("has_update"):
+        msg = f"发现新版本 v{r.get('latest')}（当前 v{r.get('local') or '未知'}）"
+    elif r.get("latest"):
+        msg = f"已是最新（v{r.get('latest')}）"
+    else:
+        msg = "未取到上游版本信息"
+    return J({"ok": bool(r.get("ok")), "msg": msg, "has_update": bool(r.get("has_update"))})
+
+
+def h_disk_check_now(request, form, session, sid):
+    """v1.24 M2-6：立即跑一次磁盘探针（不改变告警级别状态时不会重复推送）。"""
+    from services.alerts import disk_check, disk_line
+    r = disk_check(instance_current(session), force=True)
+    w = r.get("worst") or {}
+    if r.get("ok") and w:
+        msg = "磁盘检查完成：" + disk_line(w)
+    else:
+        msg = str(r.get("msg") or "磁盘探针不可用")
+    return J({"ok": bool(r.get("ok")), "msg": msg, "level": r.get("level", "")})
 
 
 def h_set_update_mode(request, form, session, sid):
@@ -624,6 +715,9 @@ POST_HANDLERS = {
     "set_after_finish": h_set_after_finish,
     "alert_save": h_alert_save,
     "alert_test": h_alert_test,
+    "morning_report_now": h_morning_report_now,
+    "upstream_check_now": h_upstream_check_now,
+    "disk_check_now": h_disk_check_now,
     "set_update_mode": h_set_update_mode,
     "set_monitor_interval": h_set_monitor_interval,
     "save_config_form": h_save_config_form,

@@ -151,6 +151,16 @@ def _version_eq(a: str, b: str) -> bool:
     return not _version_gt(a, b) and not _version_gt(b, a)
 
 
+def version_gt(a: str, b: str) -> bool:
+    """公开版本比较（v1.24 M2）：告警分级与上游本体版本检查复用。"""
+    return _version_gt(a, b)
+
+
+def version_eq(a: str, b: str) -> bool:
+    """公开版本相等判断（v1.24 M2）。"""
+    return _version_eq(a, b)
+
+
 # ===== Release / ZIP 资产 =====
 
 def _release_json() -> tuple[dict | None, str]:

@@ -229,36 +229,88 @@
         <p class="tip" style="margin:10px 0 0;">每次任务结束后，面板会从本体日志里提取开拓力、副本挑战次数、每日实训得分与玩法完成情况，按天归档到 <code>data/panel_events.db</code>。<br><span style="color:var(--muted);font-size:12px;">日志里没有出现的指标会显示为 --；日志格式变化只会少统计几项，不影响任务本身。</span></p>
       </div>
 
-      <!-- v1.18：异常告警 -->
+      <!-- v1.18：异常告警；v1.24：分级 / 静音 / 磁盘 / 晨报 / 上游更新 -->
+      {% set _up = _upstream | default({}, true) %}
       <div class="card">
         <h2><span class="icon">🚨</span> 异常告警
-          <span class="badge" id="alertBadge" style="background:var(--primary-soft);color:var(--primary);">{{ ('已启用' if ( not empty(cfgVals['alert_enable'])  and  cfgVals['alert_enable'] == '1') else '未启用') }}</span>
+          <span class="badge" id="alertBadge" style="background:var(--primary-soft);color:var(--primary);">{{ ('已启用' if ( not empty(alertVals['alert_enable'])  and  alertVals['alert_enable'] == '1') else '未启用') }}</span>
+          <span class="badge" id="alertUpBadge" title="{{ _up.get('url') or '' }}" style="background:#fff4d6;color:#8a6d1f;{{ '' if _up.get('has_update') else 'display:none;' }}">本体有新版本{{ (' v' ~ _up.get('latest')) if _up.get('latest') else '' }}</span>
         </h2>
         <div class="cfg-row">
           <div class="cfg-label">启用告警<span class="cfg-tip">容器意外停止 / 任务中断时自动推送手机</span></div>
-          <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;"><input type="checkbox" id="alertEnable" style="width:18px;height:18px;"{{ (' checked' if ( not empty(cfgVals['alert_enable'])  and  cfgVals['alert_enable'] == '1') else '') }}> 开启</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;"><input type="checkbox" id="alertEnable" style="width:18px;height:18px;"{{ (' checked' if ( not empty(alertVals['alert_enable'])  and  alertVals['alert_enable'] == '1') else '') }}> 开启</label>
         </div>
         <div class="cfg-row">
-          <div class="cfg-label">推送通道</div>
+          <div class="cfg-label">推送通道<span class="cfg-tip">分级通道留空时跟随这里</span></div>
           <select id="alertChannel" class="cfg-select" style="max-width:280px;">
-            <option value="bark"{{ (' selected' if (((cfgVals['alert_channel']) | default('bark', true)) == 'bark') else '') }}>Bark（iOS / macOS 推送）</option>
-            <option value="serverchan"{{ (' selected' if (((cfgVals['alert_channel']) | default('', true)) == 'serverchan') else '') }}>Server酱（微信推送）</option>
-            <option value="webhook"{{ (' selected' if (((cfgVals['alert_channel']) | default('', true)) == 'webhook') else '') }}>Webhook（自定义 JSON 地址）</option>
+            <option value="bark"{{ (' selected' if (((alertVals['alert_channel']) | default('bark', true)) == 'bark') else '') }}>Bark（iOS / macOS 推送）</option>
+            <option value="serverchan"{{ (' selected' if (((alertVals['alert_channel']) | default('', true)) == 'serverchan') else '') }}>Server酱（微信推送）</option>
+            <option value="webhook"{{ (' selected' if (((alertVals['alert_channel']) | default('', true)) == 'webhook') else '') }}>Webhook（自定义 JSON 地址）</option>
           </select>
         </div>
         <div class="cfg-row">
           <div class="cfg-label">接收地址<span class="cfg-tip">Bark 填推送 Key；Server酱填 SendKey；Webhook 填完整 URL</span></div>
-          <input type="text" id="alertTarget" class="cfg-input-text" style="max-width:380px;" placeholder="如：xxxx-yyyy 或 https://..." value="{{ (cfgVals['alert_target'] | default('', true)) }}">
+          <input type="text" id="alertTarget" class="cfg-input-text" style="max-width:380px;" placeholder="如：xxxx-yyyy 或 https://..." value="{{ (alertVals['alert_target'] | default('', true)) }}">
+        </div>
+        <div class="cfg-row">
+          <div class="cfg-label">分级通道<span class="cfg-tip">恢复通知＝提示级；任务中断＝警告级；容器意外停止＝严重级；留空跟随主通道</span></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            {% for lv, lb in [('info', '提示'), ('warn', '警告'), ('critical', '严重')] %}
+            {% set cur = alertVals['alert_channel_' ~ lv] | default('', true) %}
+            <select id="alertChannel{{ lv | capitalize }}" class="cfg-select" style="max-width:170px;">
+              <option value=""{{ (' selected' if not cur else '') }}>{{ lb }}：跟随主通道</option>
+              <option value="bark"{{ (' selected' if cur == 'bark' else '') }}>{{ lb }}：Bark</option>
+              <option value="serverchan"{{ (' selected' if cur == 'serverchan' else '') }}>{{ lb }}：Server酱</option>
+              <option value="webhook"{{ (' selected' if cur == 'webhook' else '') }}>{{ lb }}：Webhook</option>
+            </select>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="cfg-row">
+          <div class="cfg-label">静音级别<span class="cfg-tip">勾选后该级别只在「历史」留档，不发推送</span></div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:14px;">
+            {% set _mute = (alertVals['alert_mute_levels'] | default('', true)) | string %}
+            <label style="cursor:pointer;"><input type="checkbox" id="alertMuteInfo" style="width:16px;height:16px;"{{ (' checked' if 'info' in _mute else '') }}> 提示 info</label>
+            <label style="cursor:pointer;"><input type="checkbox" id="alertMuteWarn" style="width:16px;height:16px;"{{ (' checked' if 'warn' in _mute else '') }}> 警告 warn</label>
+            <label style="cursor:pointer;"><input type="checkbox" id="alertMuteCritical" style="width:16px;height:16px;"{{ (' checked' if 'critical' in _mute else '') }}> 严重 critical</label>
+          </div>
+        </div>
+        <div class="cfg-row">
+          <div class="cfg-label">磁盘空间预警<span class="cfg-tip">剩余低于阈值自动推送；critical 必须小于 warn</span></div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:14px;">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="diskAlertEnable" style="width:18px;height:18px;"{{ (' checked' if ((alertVals['disk_alert_enable'] | default('1', true)) | string) == '1' else '') }}> 开启</label>
+            <span>warn</span><input type="number" id="diskWarnPercent" class="cfg-input-text" style="width:76px;" min="1" max="99" value="{{ alertVals['disk_warn_percent'] | default(15, true) }}">%
+            <span>critical</span><input type="number" id="diskCritPercent" class="cfg-input-text" style="width:76px;" min="1" max="99" value="{{ alertVals['disk_crit_percent'] | default(8, true) }}">%
+            <button type="button" class="btn small gray" onclick="checkDiskNow()">🧪 立即检查</button>
+          </div>
+        </div>
+        <div class="cfg-row">
+          <div class="cfg-label">每日健康晨报<span class="cfg-tip">到点汇总昨日任务 / 告警 / 磁盘 / 本体状态</span></div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:14px;">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="morningReportEnable" style="width:18px;height:18px;"{{ (' checked' if ((alertVals['morning_report_enable'] | default('1', true)) | string) == '1' else '') }}> 开启</label>
+            <span>发送时间</span><input type="time" id="morningReportTime" class="cfg-input-text" style="width:126px;" value="{{ alertVals['morning_report_time'] | default('08:00', true) }}">
+            <button type="button" class="btn small gray" onclick="morningReportNow()">📤 立即发送</button>
+          </div>
+        </div>
+        <div class="cfg-row">
+          <div class="cfg-label">本体更新提醒<span class="cfg-tip">比对官方 Release，有新版只提醒、不自动升级</span></div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:14px;">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="upstreamCheckEnable" style="width:18px;height:18px;"{{ (' checked' if ((alertVals['upstream_check_enable'] | default('1', true)) | string) == '1' else '') }}> 开启</label>
+            <span style="color:var(--muted);">本机 {{ ('v' ~ _up.get('local')) if _up.get('local') else '未知' }}{{ (' ／ 上游 v' ~ _up.get('latest')) if _up.get('latest') else '' }}</span>
+            <button type="button" class="btn small gray" onclick="checkUpstreamNow()">🔄 立即检查</button>
+          </div>
         </div>
         <div class="btn-group">
-          <button type="button" class="btn green" onclick="saveAlert()">💾 保存设置</button>
-          <button type="button" class="btn gray" onclick="testAlert()">📤 发送测试</button>
+          <button type="button" class="btn green" id="alertSaveBtn" onclick="saveAlert()">💾 保存设置</button>
+          <button type="button" class="btn gray" id="alertTestBtn" onclick="testAlert()">📤 发送测试</button>
+          <button type="button" class="btn gray" onclick="testAlertLevel('warn')">📤 测试 warn</button>
+          <button type="button" class="btn gray" onclick="testAlertLevel('critical')">📤 测试 critical</button>
           <button type="button" class="btn gray" onclick="toggleAlertHist()">📋 历史</button>
           <button type="button" class="btn gray" onclick="exportData('alerts')" title="导出告警事件（CSV）">⬇️ 导出</button>
         </div>
         <div id="alertHistBox" style="display:none;margin-top:8px;max-height:240px;overflow:auto;border-top:1px dashed var(--border);padding-top:6px;"></div>
 
-        <p class="tip">巡检命令（宝塔「计划任务」Shell 脚本每 1 分钟执行，离线也能告警）：<code id="alerterCronCmd">{{ _alCron }}</code><br><span style="color:var(--muted);font-size:12px;">没挂 cron 时，面板打开期间也会巡检（约 45 秒一次）；配置保存后立即生效。</span></p>
+        <p class="tip">巡检命令（宝塔「计划任务」Shell 脚本每 1 分钟执行，离线也能告警；磁盘探针 6 分钟、上游版本检查 6 小时、晨报每天一次都由它捎带完成）：<code id="alerterCronCmd">{{ _alCron }}</code><br><span style="color:var(--muted);font-size:12px;">没挂 cron 时，面板打开期间也会巡检（约 45 秒一次）；配置保存后立即生效。</span></p>
       </div>
 
       <!-- v1.18：一键体检 -->

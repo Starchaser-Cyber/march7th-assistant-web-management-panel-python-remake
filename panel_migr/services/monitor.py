@@ -306,3 +306,43 @@ def monitor_sample(inst: dict, interval: int = 1) -> dict:
         except Exception:
             pass
         return {"sampled": True, "data": d, "running": running}
+
+
+def disk_probe(path: str = "/") -> dict:
+    """磁盘探针（M2/v1.24）：用挂载点的 df 取块信息，返回剩余百分比。
+
+    ⚠️ 该机 df 对 `-P` / `--output=` 等参数支持不一（busybox/精简 coreutils 差异），
+    因此只用最基础的 `df -B1 <path>`（1 字节精度），字段切分交给 Python，
+    不依赖 awk/column/百分比列，避免因 df 参数不被识别而静默失败。
+
+    返回 {"ok": bool, "path", "total", "used", "avail", "percent"}；
+    percent = 剩余百分比（向下取整，0~100）。任何异常/字段异常 → ok=False，
+    调用方据此跳过，绝不基于脏数据误报。
+    """
+    try:
+        import shlex
+        r = run_cmd(f"df -B1 {shlex.quote(str(path))}", timeout=5)
+    except Exception:
+        return {"ok": False, "path": path, "total": 0, "used": 0, "avail": 0, "percent": 0}
+    lines = [ln for ln in str(r.get("out") or "").splitlines() if ln.strip()]
+    if not lines:
+        return {"ok": False, "path": path, "total": 0, "used": 0, "avail": 0, "percent": 0}
+    # 数据行在最后；部分 df 会把超长设备名折到上一行，故要求本行至少 6 个字段
+    parts = lines[-1].split()
+    if len(parts) < 6:
+        return {"ok": False, "path": path, "total": 0, "used": 0, "avail": 0, "percent": 0}
+    try:
+        total = int(parts[1])
+        used = int(parts[2])
+        avail = int(parts[3])
+    except (TypeError, ValueError):
+        return {"ok": False, "path": path, "total": 0, "used": 0, "avail": 0, "percent": 0}
+    if total <= 0 or avail < 0:
+        return {"ok": False, "path": path, "total": 0, "used": 0, "avail": 0, "percent": 0}
+    percent = int(avail * 100 // total)      # 剩余百分比，向下取整（偏保守）
+    if percent < 0:
+        percent = 0
+    elif percent > 100:
+        percent = 100
+    return {"ok": True, "path": path, "total": total, "used": used,
+            "avail": avail, "percent": percent}

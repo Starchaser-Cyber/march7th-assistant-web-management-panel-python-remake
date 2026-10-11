@@ -66,6 +66,9 @@ def _clean(monkeypatch, tmp_path):
     monkeypatch.setattr(cfg, "DATA_DIR", data)
     monkeypatch.setattr(_hist, "DATA_DIR", data)
     monkeypatch.setattr(_mon, "DATA_DIR", data)
+    # v1.24：alert_tick 尾部会捎带 health_tick（磁盘/晨报/上游），
+    # 本文件只验证告警状态机本身，故隔离掉，避免真实 df / 网络干扰断言。
+    monkeypatch.setattr(al, "health_tick", lambda i: {})
     eventdb.reset()
     yield
     events.reset_state()
@@ -88,7 +91,7 @@ def test_alert_retry_30_60_120_then_give_up(monkeypatch, tmp_path):
                         lambda i: {"enable": True, "channel": "bark", "target": "tk"})
     fails = []
 
-    def _send(title, body, override=None):
+    def _send(title, body, override=None, severity="warn"):
         fails.append(title)
         return {"ok": False, "msg": "HTTP 500"}
 
@@ -141,7 +144,7 @@ def test_alert_retry_success_clears_pending(monkeypatch, tmp_path):
                         lambda i: {"enable": True, "channel": "bark", "target": "tk"})
     state = {"n": 0}
 
-    def _send(title, body, override=None):
+    def _send(title, body, override=None, severity="warn"):
         state["n"] += 1
         return {"ok": False, "msg": "boom"} if state["n"] == 1 else {"ok": True, "msg": "ok"}
 
@@ -171,7 +174,7 @@ def test_alert_backoff_suppresses_new_push(monkeypatch, tmp_path):
                         lambda i: {"enable": True, "channel": "bark", "target": "tk"})
     sent = []
 
-    def _send(title, body, override=None):
+    def _send(title, body, override=None, severity="warn"):
         sent.append(title)
         return {"ok": False, "msg": "down"}
 
@@ -215,7 +218,7 @@ def test_alert_dedup_same_kind_within_window(monkeypatch, tmp_path):
                         lambda i: {"enable": True, "channel": "bark", "target": "tk"})
     sent = []
     monkeypatch.setattr(al, "alert_send",
-                        lambda t, b, override=None: (sent.append(b), {"ok": True, "msg": "ok"})[1])
+                        lambda t, b, override=None, severity="warn": (sent.append(b), {"ok": True, "msg": "ok"})[1])
 
     al.alert_tick(inst, force=True)               # prev None→True
     al.alert_tick(inst, force=True)               # down → 已推送

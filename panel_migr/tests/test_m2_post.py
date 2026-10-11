@@ -1,4 +1,4 @@
-"""M2 POST 分发级测试：36 个 action 每个至少一条用例（W1-W5）。
+"""M2 POST 分发级测试：40 个 action 每个至少一条用例（W1-W6）。
 
 约定：所有路径从 config 模块读取（兼容与 test_dispatch 同进程运行）；
 会话/实例数据落在测试 tmp 目录；危险命令一律在 routers.write 层打桩。
@@ -83,9 +83,11 @@ def test_registry_covers_all_36_actions():
         "schedule_conflict", "schedule_now",
         "main", "daily", "power", "notify", "divergentloop",
         "universe", "currencywars", "currencywarsloop",
+        # v1.24 M2：磁盘立即检查 / 晨报立即发送 / 上游版本立即检查
+        "morning_report_now", "upstream_check_now", "disk_check_now",
     }
     assert set(POST_HANDLERS) == expected
-    assert len(expected) == 37
+    assert len(expected) == 40
 
 
 # ---------- W1：认证 4 + CSRF + 危险静默 ----------
@@ -429,10 +431,27 @@ def test_alert_save_roundtrip():
 def test_alert_test(monkeypatch):
     import routers.write as W
 
-    monkeypatch.setattr(W, "alert_send",
-                        lambda t, b, ov=None: {"ok": True, "msg": "已发送"})
+    seen = {}
+    monkeypatch.setattr(
+        W, "alert_send",
+        lambda t, b, ov=None, severity="warn": (
+            seen.update({"severity": severity, "title": t}) or
+            {"ok": True, "msg": "已发送"}))
     r = post("alert_test", {"alert_channel": "bark", "alert_target": "tk"})
     assert r.json() == {"ok": True, "msg": "已发送"}
+    assert seen["severity"] == "warn"                 # 缺省级别
+
+    # v1.24 M2-5：按级别测试
+    r2 = post("alert_test", {"alert_channel": "bark", "alert_target": "tk",
+                             "severity": "critical"})
+    assert r2.json()["ok"] is True
+    assert seen["severity"] == "critical"
+    assert "严重" in seen["title"]
+
+    r3 = post("alert_test", {"alert_channel": "bark", "alert_target": "tk",
+                             "severity": "不存在的级别"})
+    assert r3.json()["ok"] is True
+    assert seen["severity"] == "warn"                 # 非法级别回落 warn
 
 
 def test_set_update_mode_and_monitor_interval():
@@ -532,3 +551,56 @@ def test_schedule_now_no_due(monkeypatch):
                                                 "ran": [], "skipped": []})
     r = post("schedule_now")
     assert "触发 0 个" in r.text
+
+
+# ---------- W6：v1.24 M2 新增 action ----------
+
+def test_morning_report_now(monkeypatch):
+    import services.alerts as A
+
+    monkeypatch.setattr(A, "morning_report",
+                        lambda inst, force=False: {"ok": True, "msg": "晨报已发送"})
+    r = post("morning_report_now", {})
+    assert r.json() == {"ok": True, "msg": "晨报已发送"}
+
+
+def test_upstream_check_now_has_update(monkeypatch):
+    import services.alerts as A
+
+    monkeypatch.setattr(A, "upstream_check", lambda inst, force=False: {
+        "ok": True, "has_update": True, "local": "2026.9.30",
+        "latest": "2026.10.3", "error": ""})
+    r = post("upstream_check_now", {})
+    d = r.json()
+    assert d["ok"] is True and d["has_update"] is True
+    assert "2026.10.3" in d["msg"]
+
+
+def test_upstream_check_now_reports_failure(monkeypatch):
+    import services.alerts as A
+
+    monkeypatch.setattr(A, "upstream_check", lambda inst, force=False: {
+        "ok": False, "has_update": False, "error": "上游请求失败：超时"})
+    d = post("upstream_check_now", {}).json()
+    assert d["ok"] is False and "上游请求失败" in d["msg"]
+
+
+def test_disk_check_now(monkeypatch):
+    import services.alerts as A
+
+    monkeypatch.setattr(A, "disk_check", lambda inst, force=False: {
+        "ok": True, "level": "warn",
+        "worst": {"ok": True, "path": "/", "total": 100, "used": 85,
+                  "avail": 15, "percent": 15}})
+    d = post("disk_check_now", {}).json()
+    assert d["ok"] is True and d["level"] == "warn"
+    assert "剩余 15%" in d["msg"]
+
+
+def test_disk_check_now_probe_unavailable(monkeypatch):
+    import services.alerts as A
+
+    monkeypatch.setattr(A, "disk_check", lambda inst, force=False: {
+        "ok": False, "level": "", "msg": "磁盘探针不可用（df 读取失败或路径不存在）"})
+    d = post("disk_check_now", {}).json()
+    assert d["ok"] is False and "不可用" in d["msg"]

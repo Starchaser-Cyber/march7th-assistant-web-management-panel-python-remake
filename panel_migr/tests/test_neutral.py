@@ -19,7 +19,8 @@ def test_template_free_of_php():
 def test_panel_js_neutral_endpoint():
     js = (ROOT / "static" / "panel.js").read_text(encoding="utf-8")
     assert "index.php" not in js
-    assert js.count("fetch('action'") == 9
+    # v1.24：告警分级测试 / 立即晨报 / 立即查上游 / 立即探磁盘 复用统一的 POST 助手
+    assert js.count("fetch('action'") == 11
     assert "f.action = 'action';" in js
 
 

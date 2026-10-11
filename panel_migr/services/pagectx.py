@@ -80,6 +80,16 @@ def _cron_base(request, path: str) -> str:
     return f"{scheme}://{host}{d}"
 
 
+def _upstream_info(inst: dict) -> dict:
+    """v1.24 M2-8：面板角标用的上游版本信息（只读本地缓存，不发网络请求）。"""
+    try:
+        from services.alerts import upstream_status
+
+        return upstream_status(inst)
+    except Exception:
+        return {}
+
+
 def _panel_context(request, inst: dict, notify_check) -> dict:
     """PHP 页面段 12 个前置计算块 + 页面数据常量的等价供给。"""
     base = _cron_base(request, request.url.path)
@@ -141,8 +151,16 @@ def _panel_context(request, inst: dict, notify_check) -> dict:
     # [12] 原始配置文本（null → 空串，渲染时判断）
     raw_cfg = config_read_raw(inst)
 
+    # [13] v1.24 M2：告警配置读的是 .panel_config.php（不是本体 config.yaml，
+    #      旧版用 cfgVals 取值导致卡片显示的启用状态/通道与真实保存值不一致）；
+    #      另附上游本体版本角标（只读缓存，不触发网络）。
+    alert_vals = panel_config()
+    upstream_info = _upstream_info(inst)
+
     return {
         "cfgVals": cfg_vals,
+        "alertVals": alert_vals,
+        "_upstream": upstream_info,
         "afVal": af_val,
         "st_status": st_status,
         "_monIv": mon_iv,

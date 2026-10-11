@@ -24,7 +24,7 @@ HISTORY_KEEP = 200               # 历史最多保留条数
 SCHEDULE_WINDOW_SECONDS = 1800   # 计划任务补跑窗口（M2+）
 
 # ===== 面板自身更新（与 index.php define() 对齐，M4 可用环境变量覆盖）=====
-PANEL_VERSION = os.environ.get("M7A_PANEL_VERSION", "1.23.0")
+PANEL_VERSION = os.environ.get("M7A_PANEL_VERSION", "1.24.0")
 UPDATE_ENABLED = True
 UPDATE_TYPE = "github"           # gitea / github
 UPDATE_HOST = os.environ.get("M7A_UPDATE_HOST", "https://github.com")
@@ -100,3 +100,26 @@ except ValueError:
 # 时区对齐：PHP date() 时区与系统时区若不一致会导致零点/显示偏差。
 # 部署时用 M7A_TZ 显式锁定（默认 None = 系统时区）。
 LOCAL_TZ = os.environ.get("M7A_TZ") or None
+
+# ===== M2 告警升级（v1.24）=====
+# 告警分级：info / warn / critical；不同级别可配不同通道，也支持按级别静音。
+ALERT_SEVERITIES = ("info", "warn", "critical")
+
+# 磁盘空间预警：剩余百分比低于 warn 发 warn、低于 crit 发 critical（面板内可调）。
+DISK_WARN_PERCENT = 15               # 默认：剩余 < 15% 记 WARN
+DISK_CRIT_PERCENT = 8                # 默认：剩余 <  8% 记 CRITICAL
+DISK_PROBE_PATH = os.environ.get("M7A_DISK_PATH", "/")   # 探针挂载点（默认系统盘）
+
+# 每日健康晨报：默认开启，每天本地时间 08:00 发一次（面板内可调/可关）。
+MORNING_REPORT_ENABLE = True
+MORNING_REPORT_TIME = "08:00"
+
+# 上游本体更新提醒：定时查 GitHub Release 比对本地本体版本，仅提醒不自动升级。
+UPSTREAM_REPO = "moesnow/March7thAssistant"
+UPSTREAM_API = "https://api.github.com/repos/moesnow/March7thAssistant/releases/latest"
+UPSTREAM_RELEASE_URL = "https://github.com/moesnow/March7thAssistant/releases/latest"
+UPSTREAM_CHECK_IV = 6 * 3600         # 版本检查间隔（秒），实际是否发起由面板状态节流
+UPSTREAM_HTTP_TIMEOUT = 6            # 上游接口超时（秒），失败静默降级不乱重试
+
+# 磁盘探针巡检间隔（秒）；每日晨报每分钟判一次「是否到点」，不需要额外常量。
+DISK_CHECK_IV = 6 * 60

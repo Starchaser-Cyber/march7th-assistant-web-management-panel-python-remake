@@ -1419,42 +1419,91 @@ function alertClearAll() {
     else { miniToast('❌ ' + (d && d.msg ? d.msg : '清空失败')); }
   }).catch(function(){ miniToast('❌ 清空失败：网络错误'); });
 }
+/* ===== v1.18：告警设置；v1.24：分级 / 静音 / 磁盘 / 晨报 / 上游 ===== */
+function _ael(id) { return document.getElementById(id); }
+function _achk(id) { var e = _ael(id); return !!(e && e.checked); }
+function _aval(id, dft) { var e = _ael(id); return e ? e.value : (dft === undefined ? '' : dft); }
+function _acsrf(fd) {
+  var c = document.querySelector('input[name="csrf"]');
+  if (c) fd.append('csrf', c.value);
+}
+function _alevelChannel(sev) {
+  var cap = sev.charAt(0).toUpperCase() + sev.slice(1);
+  return _aval('alertChannel' + cap, '');
+}
+function _afillAlertForm(fd) {
+  fd.append('alert_enable', _achk('alertEnable') ? '1' : '0');
+  fd.append('alert_channel', _aval('alertChannel', 'bark'));
+  fd.append('alert_target', (_aval('alertTarget') || '').trim());
+  ['info', 'warn', 'critical'].forEach(function(sev) {
+    var cap = sev.charAt(0).toUpperCase() + sev.slice(1);
+    fd.append('alert_channel_' + sev, _alevelChannel(sev));
+    if (_achk('alertMute' + cap)) fd.append('alert_mute_' + sev, '1');
+  });
+  fd.append('disk_alert_enable', _achk('diskAlertEnable') ? '1' : '0');
+  fd.append('disk_warn_percent', _aval('diskWarnPercent', '15'));
+  fd.append('disk_crit_percent', _aval('diskCritPercent', '8'));
+  fd.append('morning_report_enable', _achk('morningReportEnable') ? '1' : '0');
+  fd.append('morning_report_time', _aval('morningReportTime', '08:00'));
+  fd.append('upstream_check_enable', _achk('upstreamCheckEnable') ? '1' : '0');
+}
 function saveAlert() {
-  var btn = document.getElementById('alertSaveBtn');
+  var btn = _ael('alertSaveBtn');
   if (btn) btn.textContent = '⏳ 保存中…';
   var fd = new FormData();
   fd.append('action', 'alert_save');
-  fd.append('alert_enable', document.getElementById('alertEnable').checked ? '1' : '0');
-  fd.append('alert_channel', document.getElementById('alertChannel').value);
-  fd.append('alert_target', document.getElementById('alertTarget').value.trim());
-  var csrf = document.querySelector('input[name="csrf"]');
-  if (csrf) fd.append('csrf', csrf.value);
+  _afillAlertForm(fd);
+  _acsrf(fd);
   fetch('action', { method: 'POST', body: fd }).then(function(r) { return r.json(); }).then(function(d) {
     if (btn) btn.textContent = '💾 保存设置';
-    var badge = document.getElementById('alertBadge');
-    if (badge && d && d.ok) badge.textContent = d.enable ? '已开启' : '未开启';
+    var badge = _ael('alertBadge');
+    if (badge && d && d.ok) badge.textContent = _achk('alertEnable') ? '已启用' : '未启用';
     miniToast(d && d.ok ? '告警配置已保存' : ('保存失败：' + (d && d.msg ? d.msg : '未知错误')));
   }).catch(function() {
     if (btn) btn.textContent = '💾 保存设置';
     miniToast('保存失败：网络错误');
   });
 }
-function testAlert() {
-  var btn = document.getElementById('alertTestBtn');
+function testAlert() { _atestAlert('warn'); }
+function testAlertLevel(sev) { _atestAlert(sev); }
+function _atestAlert(sev) {
+  var btn = _ael('alertTestBtn');
   if (btn) btn.textContent = '⏳ 发送中…';
   var fd = new FormData();
   fd.append('action', 'alert_test');
-  fd.append('alert_channel', document.getElementById('alertChannel').value);
-  fd.append('alert_target', document.getElementById('alertTarget').value.trim());
-  var csrf = document.querySelector('input[name="csrf"]');
-  if (csrf) fd.append('csrf', csrf.value);
+  fd.append('severity', sev);
+  fd.append('alert_channel', _aval('alertChannel', 'bark'));
+  fd.append('alert_target', (_aval('alertTarget') || '').trim());
+  _acsrf(fd);
   fetch('action', { method: 'POST', body: fd }).then(function(r) { return r.json(); }).then(function(d) {
     if (btn) btn.textContent = '📤 发送测试';
-    miniToast(d && d.ok ? '测试消息已发出，去手机上看一眼' : ('发送失败：' + (d && d.msg ? d.msg : '请检查配置')));
+    miniToast(d && d.ok ? ('测试消息已发出（' + sev + ' 级），去手机上看一眼')
+                        : ('发送失败：' + (d && d.msg ? d.msg : '请检查配置')));
   }).catch(function() {
     if (btn) btn.textContent = '📤 发送测试';
     miniToast('发送失败：网络错误');
   });
+}
+function _aalertNow(action, okTip) {
+  var fd = new FormData();
+  fd.append('action', action);
+  _acsrf(fd);
+  miniToast('处理中…');
+  fetch('action', { method: 'POST', body: fd }).then(function(r) { return r.json(); }).then(function(d) {
+    miniToast(d && d.ok ? (d.msg || okTip) : ('失败：' + (d && d.msg ? d.msg : '未知错误')));
+  }).catch(function() { miniToast('失败：网络错误'); });
+}
+function checkDiskNow() { _aalertNow('disk_check_now', '磁盘检查完成'); }
+function morningReportNow() { _aalertNow('morning_report_now', '晨报已发送'); }
+function checkUpstreamNow() {
+  var fd = new FormData();
+  fd.append('action', 'upstream_check_now');
+  _acsrf(fd);
+  miniToast('检查中…');
+  fetch('action', { method: 'POST', body: fd }).then(function(r) { return r.json(); }).then(function(d) {
+    miniToast(d && d.ok ? (d.msg || '检查完成') : ('失败：' + (d && d.msg ? d.msg : '未知错误')));
+    if (d && d.ok) setTimeout(function() { location.reload(); }, 1200);
+  }).catch(function() { miniToast('失败：网络错误'); });
 }
 /* ===== v1.18：全局搜索 ===== */
 var _searchHits = [], _searchIdx = [];

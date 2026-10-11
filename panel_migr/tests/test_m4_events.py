@@ -268,11 +268,12 @@ def test_alert_state_machine_publishes_and_archives(monkeypatch, tmp_path):
                                    "target": "tk"})
     sent = []
 
-    def _send(title, body, override=None):
+    def _send(title, body, override=None, severity="warn"):
         sent.append(title)
         return {"ok": True, "msg": "ok"}
 
     monkeypatch.setattr(al, "alert_send", _send)
+    monkeypatch.setattr(al, "health_tick", lambda i: {})   # v1.24：隔离健康巡检
 
     r1 = al.alert_tick(inst, force=True)           # prev=None → True：无事件
     assert r1["pushed"] is False and sent == []

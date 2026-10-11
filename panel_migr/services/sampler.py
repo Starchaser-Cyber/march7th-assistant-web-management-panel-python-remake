@@ -41,6 +41,12 @@ def alert_once(inst: dict) -> dict:
     return alert_tick(inst, force=True)
 
 
+def health_once(inst: dict) -> dict:
+    """v1.24 M2：磁盘探针（6 分钟）/ 每日晨报（判到点）/ 上游本体版本（6 小时）。"""
+    from services.alerts import health_tick
+    return health_tick(inst)
+
+
 async def runner() -> None:
     """1 秒 tick：采样（节流在 monitor_sample 内）/ 日志流 1.5s / 告警 60s / 裁剪 1h。"""
     from services.instances import instance_current
