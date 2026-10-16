@@ -171,6 +171,7 @@ def test_zip_struct_ok():
         "panel_migr/main.py": "print(1)",
         "panel_migr/config.py": 'import os\nPANEL_VERSION = os.environ.get("M7A_PANEL_VERSION", "1.20")',
         "panel_migr/static/panel.js": "//",
+        "panel_migr/routers/__init__.py": "from routers.readonly import GET_HANDLERS",
         "README.md": "# x",
     })
     assert uo._zip_struct_ok(good) is True
@@ -223,6 +224,7 @@ def test_swap_and_rollback_dryrun(tmp_path, monkeypatch):
         "panel_migr/config.py": 'import os\nPANEL_VERSION = os.environ.get("M7A_PANEL_VERSION", "1.20")',
         "panel_migr/main.py": "NEW",
         "panel_migr/static/panel.js": "//new",
+        "panel_migr/routers/__init__.py": "from routers.readonly import GET_HANDLERS",
         "README.md": "new readme",
     })
     stage = tmp_path / "stage"

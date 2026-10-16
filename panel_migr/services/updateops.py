@@ -293,7 +293,10 @@ def _zip_struct_ok(data: bytes) -> bool:
         names = [n.replace("\\", "/") for n in zipfile.ZipFile(io.BytesIO(data)).namelist()]
     except (zipfile.BadZipFile, OSError):
         return False
-    need = ("panel_migr/main.py", "panel_migr/config.py", "panel_migr/static/panel.js")
+    need = (
+        "panel_migr/main.py", "panel_migr/config.py", "panel_migr/static/panel.js",
+        "panel_migr/routers/__init__.py",   # v1.24.1：Python 包初始化，缺它则 main.py 顶层 import 炸
+    )
     return all(any(n.endswith(x) for n in names) for x in need)
 
 
@@ -591,29 +594,74 @@ def _cleanup_dirs(*dirs: Path) -> None:
 
 
 def _schedule_restart() -> str:
-    """更新完成后延迟 2 秒重启面板（systemd m7a-panel），让当前 HTTP 响应先返回。"""
+    """占位：重启已在 _apply_zip 内同步完成（含健康探测）。
+    此处只返回就绪提示，供 do_update 拼消息。"""
+    return "，面板已重启并就绪"
+
+
+def _restart_and_health_check(port: int = 9999, retries: int = 3, interval: int = 2) -> dict:
+    """更新后同步重启 m7a-panel 并探测本地端口就绪；失败返回失败原因。
+
+    两种部署形态：
+    - systemd m7a-panel：同步 systemctl restart + 轮询 HTTP 127.0.0.1:<port>/ 直到 200 或超时
+    - cron 看门狗 / 手动托管：不强行重启，返回 skipped=True 让上层提示用户手动处理
+    """
     try:
-        r = run_cmd("systemctl is-active m7a-panel")
+        r = run_cmd("systemctl is-active m7a-panel", timeout=10)
         first = (r["out"] or "").strip().split("\n")[0]
-        active = r["code"] == 0 and first in ("active", "activating", "reloading")
+        systemd_active = r["code"] == 0 and first in ("active", "activating", "reloading")
     except Exception:
-        active = False
-    if not active:
-        return "；未检测到 systemd 服务 m7a-panel，请手动重启面板进程后生效"
-    run_cmd("(sleep 2; systemctl restart m7a-panel) >/dev/null 2>&1 &", timeout=5)
-    return "，2 秒后面板将自动重启生效"
+        systemd_active = False
+
+    if not systemd_active:
+        return {
+            "ok": True, "skipped": True, "probe_ok": False,
+            "msg": "未检测到 systemd 服务 m7a-panel，请手动重启面板后生效",
+        }
+
+    # systemd：同步重启 + 轮询探测
+    r = run_cmd("systemctl restart m7a-panel", timeout=30)
+    if r.get("code") != 0:
+        return {"ok": False, "skipped": False, "probe_ok": False,
+                "msg": f"systemctl restart 失败：{(r.get('out') or '').strip()}"}
+
+    for i in range(retries):
+        time.sleep(interval)
+        try:
+            hr = http_get(f"http://127.0.0.1:{port}/", timeout=5)
+            if hr["code"] == 200:
+                return {"ok": True, "skipped": False, "probe_ok": True, "msg": ""}
+        except Exception:
+            pass
+
+    # 失败：拉一条 systemd 最后几行日志方便定位
+    journal = ""
+    try:
+        jr = run_cmd("journalctl -u m7a-panel -n 8 --no-pager", timeout=10)
+        journal = (jr.get("out") or "").strip()
+    except Exception:
+        pass
+    tail = f"；最近日志：{journal}" if journal else ""
+    return {
+        "ok": False, "skipped": False, "probe_ok": False,
+        "msg": f"服务重启后健康探测失败（{retries} 次 × {interval}s 均未收到 HTTP 200）{tail}",
+    }
 
 
 def _apply_zip(data: bytes, expect_ver: str) -> dict:
-    """校验 → 备份 → 解压换入 → 版本复核 → 运行环境兜底；任一步失败自动回滚。
+    """校验 → 备份 → 解压换入 → 版本复核 → 运行环境兜底 → 重启+健康探测；
+    任一步失败自动回滚。
 
     v1.22.1：版本复核通过后再校验/重建 panel_migr/.venv，失败走与版本复核失败
     完全相同的回滚路径（否则新代码换入但运行环境缺失 → 203/EXEC 起不来）。
+    v1.24.1：换入 + 运行环境就绪后，同步重启 m7a-panel 并轮询 127.0.0.1:9999 直到
+    HTTP 200；探测失败走回滚，绝不让「代码起不来 → 面板失联」再发生。
     """
     ts = time.strftime("%Y%m%d%H%M%S")
     stage = backups_dir() / f".stage_{ts}"
     old = backups_dir() / f".old_{ts}"
     rebuilt = False
+    hr: dict = {"ok": True, "skipped": True, "probe_ok": False, "msg": ""}
     try:
         _extract_zip(data, stage)
         _swap_stage(stage, old)
@@ -624,6 +672,9 @@ def _apply_zip(data: bytes, expect_ver: str) -> dict:
         if not rt.get("ok"):
             raise RuntimeError(rt.get("msg") or "运行环境校验失败")
         rebuilt = bool(rt.get("rebuilt"))
+        hr = _restart_and_health_check()
+        if not hr.get("ok") and not hr.get("skipped"):
+            raise RuntimeError(hr.get("msg") or "重启后健康探测失败")
     except Exception as e:
         try:
             _restore_old(old)
@@ -632,7 +683,8 @@ def _apply_zip(data: bytes, expect_ver: str) -> dict:
         _cleanup_dirs(stage, old)
         return {"ok": False, "msg": f"更新失败已回滚：{e}"}
     _cleanup_dirs(stage, old)
-    return {"ok": True, "msg": "", "rebuilt": rebuilt}
+    return {"ok": True, "msg": hr.get("msg", ""), "rebuilt": rebuilt,
+            "probe_ok": hr.get("probe_ok", False), "skipped": hr.get("skipped", False)}
 
 
 def do_update() -> dict:
