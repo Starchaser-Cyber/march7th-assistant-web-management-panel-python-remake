@@ -101,7 +101,11 @@ async def dispatch_get(request: Request) -> Response:
 
     from services.pagectx import page_response
 
-    return page_response(request)
+    # P1-15：page_response 内部同步执行 alert_tick（docker inspect / tail 子进程 /
+    # 上游 HTTP，最长 120s），直接调用会阻塞整个事件循环 → 放线程池执行。
+    import anyio.to_thread as to_thread
+
+    return await to_thread.run_sync(page_response, request)
 
 
 async def dispatch_post(request: Request) -> Response:
@@ -122,7 +126,7 @@ async def catch_all(request: Request, full_path: str):
             return await dispatch_post(request)
         if config.FWD_ENABLE:
             return await forward(request)
-        return await render_fallback(request)
+        return render_fallback(request)
     if request.method == "GET":
         if full_path.startswith("m7a-preview/"):
             # M3：/m7a-preview/* 反代容器内 preview_server（动态 IP + 自愈）
@@ -140,7 +144,7 @@ async def catch_all(request: Request, full_path: str):
             return await dispatch_get(request)
         if config.FWD_ENABLE:
             return await forward(request)
-        return await render_fallback(request)
+        return render_fallback(request)
     # PUT/DELETE/OPTIONS/PATCH：面板不使用；回滚时转发，否则本地 405
     if config.FWD_ENABLE:
         return await forward(request)

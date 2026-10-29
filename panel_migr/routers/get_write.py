@@ -107,10 +107,18 @@ def h_export_log(request) -> Response:
     path = files[idx] if files else None
     if path is None:
         return Response(content="", media_type="text/plain")
+    # v1.24.4（P2）：hours 曾直接 int() 无保护 —— ?export_log=1&hours=abc 会抛
+    # ValueError 变成 500。全仓其余同类参数都有兜底，此处补齐（非法值回落 0=不限）。
+    def _to_int(v, default=0):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return default
+
     opts = {
         "keyword": str(request.query_params.get("keyword") or ""),
         "level": str(request.query_params.get("level") or ""),
-        "hours": int(request.query_params.get("hours") or 0),
+        "hours": max(0, _to_int(request.query_params.get("hours"), 0)),
         "lines": 5000,
     }
     r = filter_log(path, opts)
@@ -137,13 +145,26 @@ def _req_key(request) -> str:
     v1.24.3 安全加固（M7A-09）：URL 里的 ?key= 会落到 nginx access log、
     浏览器历史与 Referer，默认不再接受。确有旧 cron 未迁移时，可临时设
     M7A_ALLOW_KEY_QUERY=1 恢复兼容（迁移完请关闭）。
+
+    v1.24.4：非 ASCII 头值直接视为无效（`hmac.compare_digest` 对非 ASCII str
+    会抛 TypeError → 未认证 500），在入口统一过滤。
     """
     got = str(request.headers.get("x-m7a-key") or "")
     if got:
-        return got
+        return got if got.isascii() else ""
     if os.environ.get("M7A_ALLOW_KEY_QUERY", "0") != "0":
-        return str(request.query_params.get("key") or "")
+        got = str(request.query_params.get("key") or "")
+        return got if got.isascii() else ""
     return ""
+
+
+def _key_eq(got: str, want: str) -> bool:
+    """常量时间比对；任一侧为空或含非 ASCII 字符一律视为不匹配（不抛异常）。"""
+    if not got or not want:
+        return False
+    if not (got.isascii() and want.isascii()):
+        return False
+    return hmac.compare_digest(got, want)
 
 
 def h_monitor_sampler(request) -> Response:
@@ -156,8 +177,10 @@ def h_monitor_sampler(request) -> Response:
         key = binascii.hexlify(os.urandom(16)).decode("ascii")   # v1.24.3：128-bit
         panel_config_save({"monitor_key": key})
     # v1.24.3 安全加固（M7A-06）：与其他 key 回调一致走常量时间比对
+    # v1.24.4：_req_key 已保证 got 为纯 ASCII；再保护配置侧非 ASCII key，
+    # 否则 hmac.compare_digest 会抛 TypeError → 未认证 500。
     got = _req_key(request)
-    if got == "" or not hmac.compare_digest(got, key):
+    if not got or not key.isascii() or not hmac.compare_digest(got, key):
         return JSONResponse({"ok": False, "msg": "invalid key"})
     inst = _inst(request)
     r = services_monitor_sample(inst, 60)
@@ -183,7 +206,7 @@ def _keyed(request, cfg_key: str) -> tuple[bool, str]:
     cfgv = _panel_cfg()
     want = str(cfgv.get(cfg_key) or "")
     got = _req_key(request)
-    if want == "" or got == "" or not hmac.compare_digest(want, got):
+    if not _key_eq(got, want):
         return False, ""
     return True, got
 

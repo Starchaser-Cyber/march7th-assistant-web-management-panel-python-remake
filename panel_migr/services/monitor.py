@@ -20,6 +20,7 @@ from pathlib import Path
 from config import DATA_DIR
 from services import sysmetrics as sm
 from services.instances import panel_config
+from services.logs import elapsed_ok      # v1.24.4：时钟回拨安全的节流判定
 from services.shell import run_cmd  # noqa: F401 —— 兼容既有调用方 monkeypatch（如 tests/test_m4_events）
 
 # 网络速率刷新间隔（秒）。Engine stats 单次约 1.3s，必须低频；期间沿用上次速率，
@@ -186,7 +187,7 @@ def _net_rate(d: dict, cid: str, now: int) -> tuple:
     r_in = float((last or {}).get("rateIn") or 0)
     r_out = float((last or {}).get("rateOut") or 0)
     nts = int((last or {}).get("ts") or 0)
-    if now - nts < NET_IV:
+    if not elapsed_ok(now, nts, NET_IV):        # v1.24.4：时钟回拨也视为到期
         return round(r_in, 1), round(r_out, 1)          # 沿用上次速率（平滑）
 
     ctr = sm.net_counters(cid)
@@ -220,7 +221,8 @@ def monitor_sample(inst: dict, interval: int = 1) -> dict:
         now = int(time.time())
         iv = max(1, int(interval or 1))
 
-        if now - int(d["meta"].get("lastSample") or 0) < iv:
+        if not elapsed_ok(now, d["meta"].get("lastSample"), iv):
+            # v1.24.4：时钟回拨时 elapsed_ok 返回 True → 立即补采并重置 lastSample
             return {"sampled": False, "data": d, "running": container_is_running(inst)}
 
         info = sm.container_info(inst["container"])

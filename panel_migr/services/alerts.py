@@ -26,8 +26,12 @@ v1.24 增强（M2 告警升级）：
 from __future__ import annotations
 
 import json
+import logging
+import os
+import random
 import re
 import shlex
+import threading
 import time
 from pathlib import Path
 
@@ -35,7 +39,17 @@ import config as cfg
 from services.containers import container_is_running
 from services.history import history_sync, history_data_file
 from services.instances import panel_config, instance_dir
+from services.logs import before_deadline, elapsed_ok
 from services.updateops import http_get, http_post, version_gt
+
+log = logging.getLogger("m7a.alerts")
+
+# v1.24.4（P0-5）：alert_state.json 的「读 → 改 → 写」全程互斥。
+# 6 类调用方并发（sampler 后台 / 4 个 ajax handler / pagectx 页面兜底 /
+# health_tick 内部三段巡检），无锁时后写者用旧快照覆盖前者，丢失
+# alerted_down / quiet_until / pending / last_tick。用 RLock 是因为
+# alert_tick 内部还会调 alert_state_save / health_tick（同线程重入）。
+_STATE_LOCK = threading.RLock()
 
 _ALERT_DEFAULT = {
     "prev": None,
@@ -43,6 +57,10 @@ _ALERT_DEFAULT = {
     "quiet_until": 0,
     "last_tick": 0,
     "aborted_seen": [],
+    # v1.24.4（P0-4 / P1-16）：静默期只是「延后推送」，不是「丢弃边沿」。
+    # 静默期内观测到的 down 边沿 / aborted 先记在这里，静默期结束后补推。
+    "pending_down": False,      # 静默期内检测到 down 边沿，待静默结束后补推
+    "pending_aborted": [],      # 静默期内被压下的 aborted 项：[{id,label}]
     # v1.22 状态机增强字段
     "retry_at": 0,              # 下次重试时间（epoch 秒，0=无待重试）
     "retry_count": 0,           # 当前待重试项已重试次数
@@ -65,6 +83,9 @@ _ALERT_DEFAULT = {
 # 告警分级（顺序即展示/推送优先级）
 _SEVERITIES = ("info", "warn", "critical")
 
+# alert_tick 最小间隔（秒）；时钟回拨时 elapsed_ok 会判为到期
+_TICK_IV = 45
+
 # 面板里可选的推送通道
 _CHANNELS = ("bark", "serverchan", "webhook")
 
@@ -82,11 +103,17 @@ def alert_state_file(inst: dict) -> Path:
     return _data_dir(inst) / "alert_state.json"
 
 
+def _tmp_name(p: Path) -> Path:
+    """v1.24.4（P0-5）：临时文件名带 pid + 随机后缀，避免并发 save 互踩同一个 .tmp。"""
+    return p.with_name(f"{p.name}.{os.getpid()}.{random.getrandbits(32):08x}.tmp")
+
+
 def alert_state_load(inst: dict) -> dict:
     s = dict(_ALERT_DEFAULT)
     # 可变默认值必须逐次重置（浅拷贝会共享同一 list/dict 对象）
     s["aborted_seen"] = []
     s["pending"] = []
+    s["pending_aborted"] = []
     s["last_push_kind_at"] = {}
     try:
         raw = alert_state_file(inst).read_text("utf-8")
@@ -105,6 +132,8 @@ def alert_state_load(inst: dict) -> dict:
         s["aborted_seen"] = []
     if not isinstance(s.get("pending"), list):
         s["pending"] = []
+    if not isinstance(s.get("pending_aborted"), list):
+        s["pending_aborted"] = []
     if not isinstance(s.get("last_push_kind_at"), dict):
         s["last_push_kind_at"] = {}
     for k in ("retry_at", "retry_count", "push_fail_streak", "push_backoff_until",
@@ -119,23 +148,40 @@ def alert_state_load(inst: dict) -> dict:
     return s
 
 
-def alert_state_save(inst: dict, s: dict) -> None:
+def alert_state_save(inst: dict, s: dict) -> bool:
+    """原子写状态文件；返回是否成功。
+
+    v1.24.4（P1-17）：原先 `except OSError: pass` 静默吞掉写盘失败，磁盘满时
+    `prev` 每轮读回 None → down 告警永不触发，而磁盘满恰是最该告警的场景。
+    现在失败会写 WARNING 日志并返回 False，调用方可据此不更新内存状态。
+    """
     try:
         p = alert_state_file(inst)
         p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_name(p.name + ".tmp")
-        tmp.write_text(json.dumps(s, ensure_ascii=False), "utf-8")
-        import os
-        os.replace(tmp, p)
-    except OSError:
-        pass
+        tmp = _tmp_name(p)
+        try:
+            tmp.write_text(json.dumps(s, ensure_ascii=False), "utf-8")
+            os.replace(tmp, p)
+        except OSError:
+            # 别留下半个临时文件（磁盘满时 write_text 可能写了一半）
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            raise
+        return True
+    except OSError as e:
+        log.warning("告警状态写盘失败（%s）：%s；本轮内存状态不回滚，"
+                    "下一轮将读回旧快照", alert_state_file(inst), e)
+        return False
 
 
 def alert_quiet(inst: dict, sec: int) -> None:
     """用户主动容器操作 → 静默 sec 秒，避免把人为操作当异常推送。"""
-    s = alert_state_load(inst)
-    s["quiet_until"] = int(time.time()) + int(sec)
-    alert_state_save(inst, s)
+    with _STATE_LOCK:
+        s = alert_state_load(inst)
+        s["quiet_until"] = int(time.time()) + int(sec)
+        alert_state_save(inst, s)
 
 
 # ===== 配置读取（v1.24：分级通道 / 分级静音 / 磁盘阈值 / 晨报 / 上游）=====
@@ -337,14 +383,14 @@ def _push_events(inst: dict, s: dict, events_out: list, now: int) -> bool:
             _publish_alert(inst, kind, title, body, False, 0,
                            f"{sev} 级别已静音，仅记录不推送", sev)
             continue
-        if dedup > 0 and now - int(lpk.get(kind) or 0) < dedup:
+        if dedup > 0 and not elapsed_ok(now, lpk.get(kind), dedup):
             _publish_alert(inst, kind, title, body, False, 0,
                            "同类型告警在去重窗口内，未重复推送", sev)
             continue
         sendable.append((kind, title, body, sev))
     if not sendable:
         return False
-    if now < int(s.get("push_backoff_until") or 0):
+    if before_deadline(now, s.get("push_backoff_until")):
         for kind, title, body, sev in sendable:
             _publish_alert(inst, kind, title, body, False, 0,
                            "推送连续失败，冷静期内暂不推送", sev)
@@ -381,7 +427,7 @@ def _process_pending(inst: dict, s: dict, now: int) -> bool:
     pend = [p for p in (s.get("pending") or []) if isinstance(p, dict)]
     if not pend:
         return False
-    if now < int(s.get("retry_at") or 0):
+    if before_deadline(now, s.get("retry_at")):
         return True
     # 说明：重试队列不受冷静期阻断——重试本身已被 30/60/120 限次约束；
     # 冷静期只用于抑制「新的」告警推送（见 _push_events）。
@@ -453,55 +499,102 @@ def alert_tick(inst: dict, force: bool = False) -> dict:
     M4：每次真正产生告警时发布 alert 事件（WS 实时推送 + SQLite 留档）。
     v1.22：每次 tick 先处理待重试队列，再走状态机检测（推送含去重/退避）。
     v1.24：告警分级（down=critical / aborted=warn / recovered=info），并把
-    磁盘探针、每日晨报、上游版本检查挂到同一条巡检链路上（各自内部节流）。"""
-    s = alert_state_load(inst)
-    now = int(time.time())
-    if not force and now - int(s.get("last_tick") or 0) < 45:
-        return {"ok": True, "throttled": True, "pushed": False}
-    s["last_tick"] = now
+    磁盘探针、每日晨报、上游版本检查挂到同一条巡检链路上（各自内部节流）。
 
-    # 1) 先处理待重试队列（失败告警的退避重试）
-    _process_pending(inst, s, now)
+    v1.24.4 修复：
+    - P0-5：整个「load → 状态机 → save」临界区持 `_STATE_LOCK`，避免与
+      alert_quiet / disk_check / health_tick / 页面兜底并发时互相覆盖。
+    - P0-4：静默期内观测到的 down 边沿不再丢弃，记 `pending_down`，静默期
+      结束后补推（原先 `and not quiet` 直接跳过且不置 alerted_down，而 prev
+      已写 False → 恢复后 prev is True 永不成立 → 永久不再告警）。
+    - P1-16：aborted 同理，静默期内记 `pending_aborted`，结束后补推。
+    - P1-20：`last_tick` 节流改用 elapsed_ok，时钟回拨不再永久停摆。
+    """
+    with _STATE_LOCK:
+        s = alert_state_load(inst)
+        now = int(time.time())
+        if not force and not elapsed_ok(now, s.get("last_tick"), _TICK_IV):
+            return {"ok": True, "throttled": True, "pushed": False}
+        s["last_tick"] = now
 
-    run = container_is_running(inst)
-    prev = s.get("prev")
-    s["prev"] = run
-    cfgv = alert_cfg(inst)
-    pushed = False
-    if cfgv["enable"]:
-        quiet = now < int(s.get("quiet_until") or 0)
-        events_out: list = []   # (kind, title, body, severity)
-        if prev is True and run is False and not s.get("alerted_down") and not quiet:
-            body = "🛑 容器意外停止\n面板检测到容器已不在运行，任务可能中断。"
-            events_out.append(("down", "容器意外停止", body, "critical"))
-            s["alerted_down"] = True
-        elif prev is False and run is True and s.get("alerted_down"):
-            body = "✅ 容器已恢复\n容器已重新运行，可以正常跑任务了。"
-            events_out.append(("recovered", "容器已恢复", body, "info"))
-            s["alerted_down"] = False
-        hd = history_sync(inst)
-        aborted_seen = list(s.get("aborted_seen") or [])
-        for it in hd["items"]:
-            if it.get("status") != "aborted":
-                continue
-            try:
-                iid = int(it.get("id") or 0)
-            except (TypeError, ValueError):
-                iid = 0
-            if iid <= 0 or iid in aborted_seen:
-                continue
-            aborted_seen.append(iid)
-            if quiet:
-                continue
-            label = str(it.get("task_label") or "任务")
-            body = f"⚠️ 任务中断：{label}\n请到面板「日志」页查看原因。"
-            events_out.append(("aborted", f"任务中断：{label}", body, "warn"))
-        if len(aborted_seen) > 40:
-            aborted_seen = aborted_seen[-40:]
-        s["aborted_seen"] = aborted_seen
-        if events_out:
-            pushed = _push_events(inst, s, events_out, now)
-    alert_state_save(inst, s)
+        # 1) 先处理待重试队列（失败告警的退避重试）
+        _process_pending(inst, s, now)
+
+        run = container_is_running(inst)
+        prev = s.get("prev")
+        s["prev"] = run
+        cfgv = alert_cfg(inst)
+        pushed = False
+        if cfgv["enable"]:
+            quiet = before_deadline(now, s.get("quiet_until"))
+            events_out: list = []   # (kind, title, body, severity)
+            if prev is True and run is False and not s.get("alerted_down"):
+                if quiet:
+                    # P0-4：静默期只是延后推送，边沿先记账，静默期结束补推
+                    s["pending_down"] = True
+                    log.info("静默期内检测到容器掉线，已记 pending_down，"
+                             "静默期结束后补推")
+                else:
+                    body = "🛑 容器意外停止\n面板检测到容器已不在运行，任务可能中断。"
+                    events_out.append(("down", "容器意外停止", body, "critical"))
+                    s["alerted_down"] = True
+            elif prev is False and run is True and s.get("alerted_down"):
+                body = "✅ 容器已恢复\n容器已重新运行，可以正常跑任务了。"
+                events_out.append(("recovered", "容器已恢复", body, "info"))
+                s["alerted_down"] = False
+
+            # 静默期结束：补推静默期内被压下的 down 边沿（P0-4 核心补偿）
+            if (not quiet and s.get("pending_down")
+                    and run is False and not s.get("alerted_down")):
+                body = ("🛑 容器意外停止\n面板检测到容器已不在运行，任务可能中断。"
+                        "\n（该故障发生在告警静默期内，现已补发提醒）")
+                events_out.append(("down", "容器意外停止", body, "critical"))
+                s["alerted_down"] = True
+                s["pending_down"] = False
+            elif not quiet and s.get("pending_down"):
+                # 静默期内已经自行恢复（或状态不可判定）→ 边沿失效，丢弃
+                s["pending_down"] = False
+
+            hd = history_sync(inst)
+            aborted_seen = list(s.get("aborted_seen") or [])
+            pend_ab = [x for x in (s.get("pending_aborted") or []) if isinstance(x, dict)]
+            for it in hd["items"]:
+                if it.get("status") != "aborted":
+                    continue
+                try:
+                    iid = int(it.get("id") or 0)
+                except (TypeError, ValueError):
+                    iid = 0
+                if iid <= 0 or iid in aborted_seen:
+                    continue
+                aborted_seen.append(iid)
+                label = str(it.get("task_label") or "任务")
+                if quiet:
+                    # P1-16：静默期内不丢弃边沿，先记待补推
+                    if not any(int(x.get("id") or 0) == iid for x in pend_ab):
+                        pend_ab.append({"id": iid, "label": label})
+                    continue
+                body = f"⚠️ 任务中断：{label}\n请到面板「日志」页查看原因。"
+                events_out.append(("aborted", f"任务中断：{label}", body, "warn"))
+            if len(aborted_seen) > 40:
+                aborted_seen = aborted_seen[-40:]
+            s["aborted_seen"] = aborted_seen
+            if not quiet and pend_ab:
+                # 静默期结束：补推期间积压的中断通知
+                for x in pend_ab:
+                    label = str(x.get("label") or "任务")
+                    body = (f"⚠️ 任务中断：{label}\n请到面板「日志」页查看原因。"
+                            "\n（发生在告警静默期内，现已补发提醒）")
+                    events_out.append(("aborted", f"任务中断：{label}", body, "warn"))
+                pend_ab = []
+            s["pending_aborted"] = pend_ab[-20:]
+            if events_out:
+                pushed = _push_events(inst, s, events_out, now)
+        saved = alert_state_save(inst, s)
+        # P1-17：写盘失败时不能假装成功——内存态与磁盘不一致会让 prev 回退
+        # 到旧值，这里明确回传，调用方可据此提示「状态机降级」。
+        if not saved:
+            log.warning("alert_tick：状态未能落盘，本轮 prev=%r 不会持久化", run)
 
     # 2) M2 定时巡检：磁盘（6 分钟）/ 晨报（判到点）/ 上游版本（6 小时）
     #    先落盘再调用，避免它们各自的读写覆盖本轮的 last_tick / alerted_down。
@@ -513,7 +606,8 @@ def alert_tick(inst: dict, force: bool = False) -> dict:
     return {"ok": True, "pushed": pushed, "run": run,
             "msg": "" if not pushed else "已推送",
             "pending": len(s.get("pending") or []),
-            "retry_count": int(s.get("retry_count") or 0)}
+            "retry_count": int(s.get("retry_count") or 0),
+            "state_saved": saved}
 
 
 # ===== v1.24 M2-6：磁盘空间预警 =====
@@ -577,6 +671,11 @@ def disk_check(inst: dict, force: bool = False) -> dict:
 
     只在「级别发生变化」时推送，避免同一状态反复轰炸。
     """
+    with _STATE_LOCK:
+        return _disk_check_locked(inst, force)
+
+
+def _disk_check_locked(inst: dict, force: bool = False) -> dict:
     s = alert_state_load(inst)
     now = int(time.time())
     c = alert_cfg(inst)
@@ -663,12 +762,10 @@ def morning_report_body(inst: dict) -> str:
         from services import eventdb
         evs = eventdb.list_events("alert", limit=500, frm=y_start, to=y_end)
         for e in (evs or []):
-            p = e.get("payload") if isinstance(e, dict) else None
-            if isinstance(p, str):
-                try:
-                    p = json.loads(p)
-                except ValueError:
-                    p = {}
+            # v1.24.4（P2）：list_events 已把 payload 展开成顶层字段
+            # （eventdb.py:150 `**body`），原先取 e["payload"] 恒为 None →
+            # 晨报「昨日告警条数」永远是 0。这里直接读展开后的 dict。
+            p = e if isinstance(e, dict) else None
             if not isinstance(p, dict):
                 continue
             if not p.get("pushed"):
@@ -721,6 +818,11 @@ def morning_report_body(inst: dict) -> str:
 
 def morning_report(inst: dict, force: bool = False) -> dict:
     """到点发一次晨报；同一本地日期只发一次（force=True 供「立即发送」按钮）。"""
+    with _STATE_LOCK:
+        return _morning_report_locked(inst, force)
+
+
+def _morning_report_locked(inst: dict, force: bool = False) -> dict:
     s = alert_state_load(inst)
     c = alert_cfg(inst)
     if not c["enable"]:
@@ -812,6 +914,11 @@ def upstream_status(inst: dict) -> dict:
 
 def upstream_check(inst: dict, force: bool = False) -> dict:
     """查上游最新 Release 与本地本体版本比对；有新版推 warn 级提醒（仅提醒不升级）。"""
+    with _STATE_LOCK:
+        return _upstream_check_locked(inst, force)
+
+
+def _upstream_check_locked(inst: dict, force: bool = False) -> dict:
     s = alert_state_load(inst)
     now = int(time.time())
     c = alert_cfg(inst)
@@ -822,7 +929,8 @@ def upstream_check(inst: dict, force: bool = False) -> dict:
             "msg": "告警未启用" if not c["enable"] else "本体更新提醒已关闭",
         })
         return out
-    if not force and now - int(s.get("upstream_last_check") or 0) < int(cfg.UPSTREAM_CHECK_IV):
+    if not force and not elapsed_ok(now, s.get("upstream_last_check"),
+                                    int(cfg.UPSTREAM_CHECK_IV)):
         out = upstream_status(inst)
         out["cached"] = True
         out["pushed"] = False
@@ -873,10 +981,17 @@ def health_tick(inst: dict) -> dict:
     被 sampler.runner（60s）与 alert_tick（cron / 打开页面兜底）共同驱动，
     重复调用安全：磁盘 6 分钟一次、上游 6 小时一次、晨报每天一次。
     """
+    # v1.24.4（P0-5）：health_tick 自身也是一次「读→改→写」，必须与
+    # alert_tick / disk_check / 页面兜底串行化；RLock 允许 alert_tick 内部重入。
+    with _STATE_LOCK:
+        return _health_tick_locked(inst)
+
+
+def _health_tick_locked(inst: dict) -> dict:
     out: dict = {}
     s = alert_state_load(inst)
     now = int(time.time())
-    if now - int(s.get("disk_last_check") or 0) >= int(cfg.DISK_CHECK_IV):
+    if elapsed_ok(now, s.get("disk_last_check"), int(cfg.DISK_CHECK_IV)):
         s["disk_last_check"] = now
         alert_state_save(inst, s)
         try:

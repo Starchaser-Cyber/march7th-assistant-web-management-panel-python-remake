@@ -15,10 +15,13 @@ import io
 import json
 import os
 import re
+import secrets
 import shutil
 import sys
+import threading
 import time
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import quote as rawurlencode
 
@@ -37,8 +40,148 @@ IMAGE_REPO = "moesnow/march7thassistant"
 GHCR_PREFIXES = ("ghcr.io/", "ghcr.nju.edu.cn/", "ghcr.m.daocloud.io/", "ghcr.dockerproxy.com/")
 
 # 备份/换入时永远不动的运行数据与内部目录
-_PROTECT_TOP = ("data", "backups")
+# v1.24.4（P1-1）：sessions/ 必须一起保护 —— 此前它随整包备份进 backups/*.zip
+# （0644，绕过 v1.24.3 的会话文件权限加固），一键回滚又把旧快照整体换回，
+# 等于复活已注销的会话（认证绕过）。备份与换入两侧都跳过它。
+_PROTECT_TOP = ("data", "backups", "sessions")
 _PROTECT_DIRS = {"__pycache__", ".venv", "venv", "node_modules", "_tmp", ".git"}
+
+# 代码根：panel_migr/ 的父目录。与 cfg.BASE_DIR（数据根，可被 M7A_PANEL_DIR 改成
+# /srv/m7a-panel）不同 —— README 推荐的「代码/数据分离」部署下两者不是同一目录。
+# v1.24.4（P1-5）：整包备份与版本复核都必须以代码根为准，否则在分离布局下
+# 备份到 0 个文件、版本读成空串，更新必然失败。
+CODE_ROOT = Path(__file__).resolve().parent.parent
+
+# 更新互斥（v1.24.4 P1-3）：同一秒并发会共用 .stage_<ts>/.old_<ts> 目录，互相
+# rmtree 掉对方正在使用的目录。do_update 全程非阻塞持锁，拿不到直接拒绝。
+_UPDATE_LOCK = threading.Lock()
+
+# 解压/下载上限（v1.24.4 P1-8）：防 zip bomb 打爆内存与磁盘（本机 8G 红线）。
+_MAX_TOTAL_SIZE = 200 * 1024 * 1024      # 解压后总大小上限 200MB
+_MAX_ENTRIES = 20000                     # 条目数上限
+_MAX_FILE_SIZE = 50 * 1024 * 1024        # 单文件上限 50MB
+_MAX_RATIO = 200                         # 压缩比上限 200:1
+_MAX_DOWNLOAD = 64 * 1024 * 1024         # 下载包体上限 64MB
+
+# 重启与健康探测（v1.24.4 P0-3/P0-6）
+_RESTART_UNIT = "m7a-panel"
+_HEALTH_PROBE_SCRIPT = "/tmp/m7a_health_probe.py"
+
+# detach 出去的健康探测 / 回滚脚本（v1.24.4 P0-3）。
+# 为什么要独立脚本：一键更新跑在被重启进程**自己的**请求线程里
+# （routers/write.py h_do_update → main.py:59 to_thread.run_sync），
+# 原地 systemctl restart 会让 systemctl 与 uvicorn 优雅关停互等，
+# 90s 后 SIGKILL，重启后的探测与回滚成为死代码。
+# 因此把「restart → 轮询端口 → 失败回滚」整体交给 setsid 出去的独立进程：
+# 父进程立即返回响应，随后被杀也不影响探测；脚本自己持有 old/ 的清理权。
+_PROBE_SCRIPT_SRC = '''#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""m7a-panel 更新后重启 / 健康探测 / 失败自动回滚（v1.24.4 P0-3）。
+
+由 panel 更新收尾时以 detach 方式启动（setsid + 后台），因此**不依赖发起更新的
+进程存活**：systemctl restart 会杀掉那个进程，本脚本继续跑完探测；探测失败时把
+old/ 里的旧代码换回 base 再重启一次。
+
+用法（参数全部由 updateops 传入）：
+  m7a_health_probe.py <base> <old> <stage> <port> <retries> <interval> <unit>
+
+时序：
+  0s    启动（父进程已把 HTTP 响应返回给浏览器）
+  1s    systemctl restart <unit>
+  +N s  每 interval 秒 GET http://127.0.0.1:<port>/ 一次，共 retries 次
+  成功  → 删 old/ stage/，退出 0
+  失败  → 用 old/ 覆盖回 base，再 restart 一次；old/ 换回成功才删，
+          失败则原样保留并退出 3（旧代码仍在 old/，可人工恢复）
+日志写到 <old>.probe.log，便于事后排查。
+"""
+import os
+import shutil
+import subprocess
+import sys
+import time
+import urllib.request
+
+
+def log(msg, path):
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + msg + "\\n")
+    except OSError:
+        pass
+
+
+def run(cmd, timeout=90):
+    try:
+        p = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, ((p.stdout or "") + (p.stderr or "")).strip()
+    except Exception as e:
+        return 1, str(e)
+
+
+def probe(port):
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:%d/" % int(port), timeout=5) as r:
+            return int(getattr(r, "status", 0) or 0) == 200
+    except Exception:
+        return False
+
+
+def rollback(base, old):
+    """把 old/ 里的原条目换回 base；返回失败条目数。"""
+    failed = 0
+    for name in sorted(os.listdir(old)):
+        if name.startswith(".venv_stash_"):
+            continue
+        src = os.path.join(old, name)
+        dst = os.path.join(base, name)
+        try:
+            if os.path.isdir(dst) and not os.path.islink(dst):
+                shutil.rmtree(dst)
+            elif os.path.lexists(dst):
+                os.unlink(dst)
+            shutil.move(src, dst)
+        except OSError:
+            failed += 1
+    return failed
+
+
+def main():
+    if len(sys.argv) < 8:
+        return 2
+    base, old, stage, port, retries, interval, unit = sys.argv[1:8]
+    logpath = old.rstrip("/") + ".probe.log"
+    time.sleep(1)
+    rc, out = run("systemctl restart %s" % unit)
+    log("restart rc=%s %s" % (rc, out[:200]), logpath)
+    for _ in range(int(retries)):
+        time.sleep(float(interval))
+        if probe(port):
+            log("probe ok, cleanup", logpath)
+            shutil.rmtree(old, ignore_errors=True)
+            shutil.rmtree(stage, ignore_errors=True)
+            return 0
+    log("probe failed, rolling back", logpath)
+    if not os.path.isdir(old):
+        log("no old/ to roll back, giving up", logpath)
+        return 4
+    failed = rollback(base, old)
+    run("systemctl restart %s" % unit)
+    if failed:
+        log("rollback incomplete (%d items), kept %s" % (failed, old), logpath)
+        return 3
+    shutil.rmtree(old, ignore_errors=True)
+    shutil.rmtree(stage, ignore_errors=True)
+    log("rolled back ok", logpath)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
+
+# 最近一次 _backup_panel_zip 失败的具体原因（空串=上次成功）。do_update 用它
+# 替代原先一律甩给用户的「请检查 backups 目录权限」误导文案（v1.24.4 P1-2/P1-5）。
+_LAST_BACKUP_ERR = ""
 
 
 # ===== HTTP（等价 PHP http_get / http_post）=====
@@ -55,17 +198,33 @@ def http_get(url: str, timeout: int = 8) -> dict:
 
 
 def http_bytes(url: str, timeout: int = 60) -> bytes | None:
-    """下载二进制（更新包）；失败 → None。"""
+    """下载二进制（更新包）；失败 / 超过 _MAX_DOWNLOAD → None。
+
+    v1.24.4（P1-8）：改流式读取 + 边读边累计上限。此前用 httpx.get 把整包读进
+    内存（无 Content-Length 上限），投毒包可直接把 8G 机器打爆。
+    """
     try:
-        r = httpx.get(
-            url, timeout=httpx.Timeout(timeout, connect=10), follow_redirects=True,
-            headers={"User-Agent": UA},
-        )
-        if r.status_code == 200 and r.content:
-            return r.content
+        with httpx.stream(
+            "GET", url, timeout=httpx.Timeout(timeout, connect=10),
+            follow_redirects=True, headers={"User-Agent": UA},
+        ) as r:
+            if r.status_code != 200:
+                return None
+            # 有 Content-Length 且明显超限：不读包体，直接放弃
+            try:
+                cl = int(r.headers.get("content-length") or 0)
+            except (TypeError, ValueError):
+                cl = 0
+            if cl > _MAX_DOWNLOAD:
+                return None
+            buf = bytearray()
+            for chunk in r.iter_bytes():
+                buf.extend(chunk)
+                if len(buf) > _MAX_DOWNLOAD:
+                    return None
+            return bytes(buf) if buf else None
     except Exception:
-        pass
-    return None
+        return None
 
 
 def http_post(url: str, fields: dict, timeout: int = 8, as_json: bool = False) -> dict:
@@ -318,16 +477,34 @@ def _version_from_text(txt: str) -> str:
 
 
 def _zip_struct_ok(data: bytes) -> bool:
-    """包内必须有 panel_migr 主程序与前端资源。"""
+    """包内必须有 panel_migr 主程序与前端资源。
+
+    v1.24.4（P1-7）：不再用 endswith 匹配 —— 那会放过带外层目录的包
+    （m7a_panel_V1.24.3/panel_migr/...），而 _swap_stage 是按解压根目录的一级
+    条目换入的：多一层外层目录时，同版本重打包会「假成功」（一行代码没换、还
+    往面板根塞进一个目录），不同版本则回滚后残留垃圾目录。
+    现在要求包根**直接**含 panel_migr/，且不存在单一顶层目录包裹。
+    """
     try:
         names = [n.replace("\\", "/") for n in zipfile.ZipFile(io.BytesIO(data)).namelist()]
     except (zipfile.BadZipFile, OSError):
+        return False
+    if not names:
+        return False
+    # 包根必须直接是 panel_migr/...（不能有外层目录包裹）
+    if any(n.startswith("/") for n in names):
+        return False
+    tops = {n.split("/", 1)[0] for n in names if n.strip("/")}
+    if "panel_migr" not in tops:
+        return False
+    # 只有一个顶层目录且不是 panel_migr → 典型的「多一层外层目录」包
+    if len(tops) == 1 and "panel_migr" not in tops:
         return False
     need = (
         "panel_migr/main.py", "panel_migr/config.py", "panel_migr/static/panel.js",
         "panel_migr/routers/__init__.py",   # v1.24.1：Python 包初始化，缺它则 main.py 顶层 import 炸
     )
-    return all(any(n.endswith(x) for n in names) for x in need)
+    return all(any(n == x or n.startswith(x + "/") for n in names) for x in need)
 
 
 def _zip_new_version(data: bytes) -> str:
@@ -341,69 +518,184 @@ def _zip_new_version(data: bytes) -> str:
     raise RuntimeError("包内缺少 panel_migr/config.py")
 
 
-def _installed_version() -> str:
+def _code_root() -> Path:
+    """代码所在目录（含 panel_migr/ 的那一级）。
+
+    v1.24.4（P1-5）：README 推荐的部署把代码放 /opt/m7a-panel-repo、数据放
+    /srv/m7a-panel（M7A_PANEL_DIR）。此前备份与版本复核都以 cfg.BASE_DIR 为根，
+    在分离布局下会备份到 0 个文件并误报「请检查 backups 目录权限」。
+    兼容单目录布局：BASE_DIR 下确实有 panel_migr/ 时仍以它为根（旧部署 + 测试）。
+    """
+    base = Path(cfg.BASE_DIR)
     try:
-        txt = (cfg.BASE_DIR / "panel_migr" / "config.py").read_text("utf-8", "replace")
+        if (base / "panel_migr").is_dir():
+            return base
+    except OSError:
+        pass
+    return CODE_ROOT
+
+
+def _installed_version() -> str:
+    """读取**代码目录**里已安装的版本号（v1.24.4 P1-5）。"""
+    try:
+        txt = (_code_root() / "panel_migr" / "config.py").read_text("utf-8", "replace")
     except OSError:
         return ""
     return _version_from_text(txt)
 
 
 def _extract_zip(data: bytes, stage: Path) -> None:
+    """解压更新包到 stage；带 zip bomb 防护（v1.24.4 P1-8）。
+
+    先遍历 infolist 累计 file_size（压缩包元数据，不需要真的解压），校验
+    总大小 / 条目数 / 单文件大小 / 压缩比，任一超限直接抛异常，绝不解压。
+    再逐条 extract（不用 extractall，便于按条目复核实际写盘大小）。
+    """
     stage.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(io.BytesIO(data)) as z:
-        for info in z.infolist():
+        infos = z.infolist()
+        if len(infos) > _MAX_ENTRIES:
+            raise RuntimeError(
+                f"更新包条目数异常（{len(infos)} > {_MAX_ENTRIES}），已中止解压")
+        total = 0
+        for info in infos:
             nm = info.filename.replace("\\", "/")
             if nm.startswith("/") or ".." in nm.split("/"):
                 raise RuntimeError(f"包内路径非法：{nm}")
+            size = int(info.file_size or 0)
+            if size > _MAX_FILE_SIZE:
+                raise RuntimeError(
+                    f"更新包内单文件过大（{nm} {size}B > {_MAX_FILE_SIZE}B），已中止解压")
+            total += size
+            if total > _MAX_TOTAL_SIZE:
+                raise RuntimeError(
+                    f"更新包解压后总大小超限（>{_MAX_TOTAL_SIZE}B），已中止解压")
+            csize = int(info.compress_size or 0)
+            if csize > 0 and size / csize > _MAX_RATIO:
+                raise RuntimeError(
+                    f"更新包压缩比异常（{nm} {size}/{csize} > {_MAX_RATIO}:1），"
+                    f"疑似解压炸弹，已中止解压")
         z.extractall(stage)
 
 
+class _BackupError(RuntimeError):
+    """备份过程中遇到的、需要如实告知用户的失败（v1.24.4 P1-2）。"""
+
+
+# 1980-01-01T00:00:00Z —— ZIP 格式能表示的最早时间；早于它的 mtime 会让
+# zf.write() 抛 ValueError（云盘/网盘同步、旧包解压都常见）。
+_ZIP_MIN_TS = 315532800
+
+
+def _zip_date_time(p: Path) -> tuple:
+    """文件 mtime → ZIP date_time，钳到 1980 之后（v1.24.4 P1-2）。
+
+    注意不能只把时间戳钳到 315532800：负时区下 localtime 会落到 1979-12-31，
+    仍然抛 ValueError，所以再兜一层年月检查。
+    """
+    try:
+        ts = int(p.stat().st_mtime)
+    except OSError:
+        ts = int(time.time())
+    if ts < _ZIP_MIN_TS:
+        ts = _ZIP_MIN_TS
+    dt = time.localtime(ts)[:6]
+    if dt[0] < 1980:
+        return (1980, 1, 1, 0, 0, 0)
+    return dt
+
+
 def _zip_tree(zf: zipfile.ZipFile, root: Path, arc_root: str) -> int:
+    """递归把 root 下的文件写进 zf；返回写入条目数。
+
+    v1.24.4（P1-2）：不再用 zf.write（对 <1980 的 mtime 抛 ValueError，而旧代码
+    只捕获 OSError → 异常穿出 do_update 变成 500，还留下半截 zip 被当成合法备份）。
+    改为显式 ZipInfo(date_time=...)，且 (OSError, ValueError) 都转成 _BackupError，
+    由 _backup_panel_zip 删残件并如实报错。
+    """
     n = 0
     try:
         items = sorted(root.rglob("*"))
-    except OSError:
-        return 0
+    except OSError as e:
+        raise _BackupError(f"遍历 {root} 失败：{e}") from e
     for p in items:
         rel = p.relative_to(root)
         if any(part in _PROTECT_DIRS for part in rel.parts):
             continue
-        if p.is_file():
-            try:
-                zf.write(p, str(Path(arc_root) / rel))
-                n += 1
-            except OSError:
-                pass
+        if not p.is_file():
+            continue
+        try:
+            mode = p.stat().st_mode & 0o777
+        except OSError:
+            mode = 0o644
+        try:
+            zi = zipfile.ZipInfo(str(Path(arc_root) / rel), date_time=_zip_date_time(p))
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            zi.external_attr = (mode or 0o644) << 16
+            zf.writestr(zi, p.read_bytes())
+            n += 1
+        except (OSError, ValueError) as e:
+            raise _BackupError(f"打包 {rel} 失败：{e}") from e
     return n
 
 
 def _backup_panel_zip(version: str = "") -> str:
-    """整面板快照 → backups/panel_<ver>_<ts>.zip（不含 data/ backups/ 运行数据）。
-    成功返回路径，失败返回 ""（与 backup_current_index 语义一致）。"""
+    """整面板快照 → backups/panel_<ver>_<ts>.zip（不含 data/ backups/ sessions/）。
+    成功返回路径，失败返回 ""（与 backup_current_index 语义一致）；
+    失败原因写入模块级 _LAST_BACKUP_ERR，供 do_update 如实转述给用户。
+
+    v1.24.4（P1-5）：打包根改为**代码目录**（_code_root()）。此前以 cfg.BASE_DIR
+    为根，在 README 推荐的「代码 /opt/m7a-panel-repo + 数据 /srv/m7a-panel」布局下
+    一个文件都打包不到（n==0），恒报「备份失败（请检查 backups 目录权限）」——
+    错误信息完全误导运维。
+    """
+    global _LAST_BACKUP_ERR
+    _LAST_BACKUP_ERR = ""
     d = backups_dir()
     if not d.is_dir():
+        _LAST_BACKUP_ERR = f"备份目录不可用：{d}"
+        return ""
+    root = _code_root()
+    if not (root / "panel_migr").is_dir():
+        _LAST_BACKUP_ERR = f"找不到面板代码目录（{root}/panel_migr 不存在）"
         return ""
     ver = re.sub(r"[^A-Za-z0-9._-]", "", (version or cfg.PANEL_VERSION).strip()) or "unknown"
     target = d / f"panel_{ver}_{time.strftime('%Y%m%d%H%M%S')}.zip"
     try:
         with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zf:
             n = 0
-            for item in sorted(cfg.BASE_DIR.iterdir()):
+            for item in sorted(root.iterdir()):
                 if item.name in _PROTECT_TOP or item.name.startswith("."):
                     continue
                 if item.is_dir():
                     n += _zip_tree(zf, item, item.name)
                 elif item.is_file():
                     try:
-                        zf.write(item, item.name)
+                        zi = zipfile.ZipInfo(item.name, date_time=_zip_date_time(item))
+                        zi.compress_type = zipfile.ZIP_DEFLATED
+                        zi.external_attr = (item.stat().st_mode & 0o777) << 16
+                        zf.writestr(zi, item.read_bytes())
                         n += 1
-                    except OSError:
-                        pass
+                    except (OSError, ValueError) as e:
+                        raise _BackupError(f"打包 {item.name} 失败：{e}") from e
         if n == 0 or target.stat().st_size < 200:
-            target.unlink()
+            # 不是权限问题：这个目录里根本没有可备份的面板文件（布局不匹配）
+            _LAST_BACKUP_ERR = (
+                f"没有可备份的面板文件（代码目录 {root} 下未找到 panel_migr/ 等面板文件）")
+            try:
+                target.unlink()
+            except OSError:
+                pass
             return ""
-    except OSError:
+    except _BackupError as e:
+        _LAST_BACKUP_ERR = str(e)
+        try:
+            target.unlink()
+        except OSError:
+            pass
+        return ""
+    except (OSError, ValueError) as e:
+        _LAST_BACKUP_ERR = f"写入备份失败：{e}"
         try:
             target.unlink()
         except OSError:
@@ -415,11 +707,16 @@ def _backup_panel_zip(version: str = "") -> str:
 
 def _swap_stage(stage: Path, old: Path) -> None:
     """stage 内一级条目换入面板目录；被替换的条目移入 old 供失败回滚。
-    data/ backups/ 等运行数据永不触碰。
+    data/ backups/ sessions/ 等运行数据永不触碰。
     v1.21.1：现有 .venv 运行环境先摘出暂存、换入后放回——此前它随旧目录进入
     old 会被回滚清理一并删掉，导致面板进程起不来（203/EXEC 循环）。
     v1.22.1：暂存/放回改用 lexists 判断，避免 .venv 为符号链接时被静默丢弃；
-    stash 一旦建立就必须放回，放回失败直接抛异常（交由上层回滚，不再静默跳过）。"""
+    stash 一旦建立就必须放回，放回失败直接抛异常（交由上层回滚，不再静默跳过）。
+    v1.24.4（P1-7）：换入前校验 stage/panel_migr 必须是目录。带外层目录的包
+    （m7a_panel_V1.24.3/panel_migr/...）在这里明确失败，而不是「假成功」或
+    在面板根目录留下一个垃圾目录。"""
+    if not (stage / "panel_migr").is_dir():
+        raise RuntimeError("发布包结构错误：zip 根必须直接是 panel_migr/（不得有外层目录）")
     old.mkdir(parents=True, exist_ok=True)
     venv_kept: list[Path] = []
     for item in sorted(stage.iterdir()):
@@ -547,13 +844,20 @@ def _ensure_runtime(runner=None, base_dir: Path | None = None) -> dict:
     return {"ok": True, "rebuilt": True, "msg": "运行环境已重建"}
 
 
-def _restore_old(old: Path) -> None:
+def _restore_old(old: Path) -> dict:
     """回滚：把 old 里的原条目移回面板目录（覆盖换入失败的新条目）。
+
     v1.22.1：换入成功时 .venv 已放回新目录，回滚若直接 rmtree 新目录会连带删掉运行
     环境（面板下次重启即 203/EXEC）。因此先把当前 .venv 救出暂存、普通条目恢复完再
-    放回；救出槽位放在 old 同级，即使放回失败也不会随 old 被清理掉。"""
+    放回；救出槽位放在 old 同级，即使放回失败也不会随 old 被清理掉。
+
+    v1.24.4（P0-2）：返回结果字典而不是静默吞掉失败。调用方（_apply_zip）据此决定
+    是否允许清理 old/ —— 回滚失败时 old/ 是旧代码的**唯一副本**，删掉就永久损坏。
+    返回 {"ok": bool, "restored": int, "failed": int, "errors": [str, ...]}。
+    """
+    res = {"ok": True, "restored": 0, "failed": 0, "errors": []}
     if not old.is_dir():
-        return
+        return res
     items = sorted(old.iterdir())
     rescue = old.parent / (old.name + ".venvrescue")
     rescued: list = []
@@ -573,8 +877,9 @@ def _restore_old(old: Path) -> None:
                         slot.unlink()
                 shutil.move(str(cur_venv), str(slot))
                 rescued.append((item.name, slot))
-            except OSError:
-                pass
+            except OSError as e:
+                res["failed"] += 1
+                res["errors"].append(f"暂存 {item.name}/.venv 失败：{e}")
         try:
             if os.path.lexists(dest):
                 if dest.is_dir() and not dest.is_symlink():
@@ -582,8 +887,10 @@ def _restore_old(old: Path) -> None:
                 else:
                     dest.unlink()
             shutil.move(str(item), str(dest))
-        except OSError:
-            pass
+            res["restored"] += 1
+        except OSError as e:
+            res["failed"] += 1
+            res["errors"].append(f"恢复 {item.name} 失败：{e}")
     # 放回救出的运行环境（恢复后的目录里没有 .venv 时才补）
     for name, slot in rescued:
         target = cfg.BASE_DIR / name
@@ -593,8 +900,9 @@ def _restore_old(old: Path) -> None:
             venv_dst = target / ".venv"
             if not os.path.lexists(venv_dst) and os.path.lexists(slot):
                 shutil.move(str(slot), str(venv_dst))
-        except OSError:
-            pass
+        except OSError as e:
+            res["failed"] += 1
+            res["errors"].append(f"放回 {name}/.venv 失败：{e}")
     # v1.21.1：普通条目恢复完后，把暂存的 .venv 放回对应目录（回滚后运行环境不丢）
     for item in items:
         if not item.name.startswith(".venv_stash_"):
@@ -607,14 +915,17 @@ def _restore_old(old: Path) -> None:
             venv_dst = target / ".venv"
             if not os.path.lexists(venv_dst) and os.path.lexists(item):
                 shutil.move(str(item), str(venv_dst))
-        except OSError:
-            pass
+        except OSError as e:
+            res["failed"] += 1
+            res["errors"].append(f"放回暂存 {base_name}/.venv 失败：{e}")
     # 空壳 rescue 目录清理（仍有残留槽位则保留，便于人工恢复）
     try:
         if rescue.is_dir() and not any(rescue.iterdir()):
             rescue.rmdir()
     except OSError:
         pass
+    res["ok"] = res["failed"] == 0
+    return res
 
 
 def _cleanup_dirs(*dirs: Path) -> None:
@@ -623,19 +934,205 @@ def _cleanup_dirs(*dirs: Path) -> None:
             shutil.rmtree(p, ignore_errors=True)
 
 
+def _recover_interrupted() -> dict:
+    """崩溃/断电后恢复：扫描 backups/ 下的 .old_* 与 .stage_* 残留（v1.24.4 P1-4）。
+
+    此前更新中途被 SIGKILL（正是 P0-3 的死锁结局）会永久留下 `.old_*`/`.stage_*`：
+    新代码可能只换入了一半，而唯一完整的旧代码躺在 .old_* 里没人管；下次更新又
+    按时间戳生成新目录，旧残留永远堆积。这里在**持锁后**调用，规则：
+      - `.stage_*`：换入前的临时解压目录，绝无保留价值 → 直接删；
+      - `.old_*`：若面板关键文件（panel_migr/main.py）缺失或为空 → 判定换入
+        做到一半，把 .old_* 内容换回；换回成功才删残留，失败则原样保留；
+      - `.old_*` 且关键文件完好 → 说明换入已完成、只是没来得及清理 → 删。
+    返回 {"recovered": [...], "removed": [...], "errors": [...]}，供日志/测试断言。
+    """
+    out: dict = {"recovered": [], "removed": [], "errors": []}
+    try:
+        d = backups_dir()
+        entries = sorted(d.glob(".stage_*")) + sorted(d.glob(".old_*"))
+    except OSError as e:
+        out["errors"].append(str(e))
+        return out
+    # 换回目标与 _restore_old 一致（cfg.BASE_DIR）；分离布局下代码目录也一并检查，
+    # 任一存在完整 main.py 就说明换入已完成，old/ 只是没来得及清理。
+    roots = [Path(cfg.BASE_DIR)]
+    try:
+        cr = _code_root()
+        if cr not in roots:
+            roots.append(cr)
+    except Exception:
+        pass
+    for p in entries:
+        if not p.is_dir():
+            continue
+        if p.name.startswith(".stage_"):
+            try:
+                shutil.rmtree(p)
+                out["removed"].append(p.name)
+            except OSError as e:
+                out["errors"].append(f"清理 {p.name} 失败：{e}")
+            continue
+        # .old_*：先判断面板代码是否完整
+        intact = False
+        for root in roots:
+            main_py = root / "panel_migr" / "main.py"
+            try:
+                if main_py.is_file() and main_py.stat().st_size > 0:
+                    intact = True
+                    break
+            except OSError:
+                continue
+        if intact:
+            try:
+                shutil.rmtree(p)
+                out["removed"].append(p.name)
+            except OSError as e:
+                out["errors"].append(f"清理 {p.name} 失败：{e}")
+            continue
+        # 关键文件缺失 → 换回旧代码
+        try:
+            res = _restore_old(p)
+        except Exception as e:                       # noqa: BLE001 - 恢复失败要如实上报
+            out["errors"].append(f"恢复 {p.name} 异常：{e}")
+            continue
+        if res.get("ok"):
+            try:
+                shutil.rmtree(p)
+            except OSError:
+                pass
+            out["recovered"].append(p.name)
+        else:
+            out["errors"].extend(res.get("errors") or [])
+    return out
+
+
 def _schedule_restart() -> str:
     """占位：重启已在 _apply_zip 内同步完成（含健康探测）。
     此处只返回就绪提示，供 do_update 拼消息。"""
     return "，面板已重启并就绪"
 
 
-def _restart_and_health_check(port: int = 9999, retries: int = 3, interval: int = 2) -> dict:
-    """更新后同步重启 m7a-panel 并探测本地端口就绪；失败返回失败原因。
+def _self_under_unit() -> bool:
+    """当前进程是否**就由** _RESTART_UNIT 这个 systemd 单元托管（v1.24.4 P0-3）。
 
-    两种部署形态：
-    - systemd m7a-panel：同步 systemctl restart + 轮询 HTTP 127.0.0.1:<port>/ 直到 200 或超时
-    - cron 看门狗 / 手动托管：不强行重启，返回 skipped=True 让上层提示用户手动处理
+    为什么必须区分：一键更新的调用链是 routers/write.py h_do_update →
+    main.py:59 `await to_thread.run_sync(handler, request)`，即在**本进程自己的
+    线程**里执行 `systemctl restart m7a-panel`。systemctl 等 uvicorn 优雅退出，
+    uvicorn 等这个请求线程跑完，两边互等到 TimeoutStopSec=90s 被 SIGKILL ——
+    重启后的健康探测与自动回滚永远是死代码。
+    因此只有「确实会被自己重启掉」的进程才走 detach；pytest / 前台手工运行
+    仍走同步路径（行为与 v1.24.1 一致，便于测试与手工验证）。
     """
+    try:
+        cg = Path("/proc/self/cgroup").read_text("utf-8", "replace")
+    except OSError:
+        return False
+    return f"/{_RESTART_UNIT}.service" in cg
+
+
+def _probe_python() -> str:
+    """detach 脚本用的解释器：优先当前解释器，退回系统 python3。"""
+    exe = sys.executable or ""
+    try:
+        if exe and Path(exe).exists():
+            return exe
+    except OSError:
+        pass
+    return shutil.which("python3") or "/usr/bin/python3"
+
+
+def _write_probe_script() -> Path:
+    """把自包含的健康探测/回滚脚本写到 /tmp（每次调用重写，避免陈旧版本）。"""
+    p = Path(_HEALTH_PROBE_SCRIPT)
+    try:
+        p.write_text(_PROBE_SCRIPT_SRC, "utf-8")
+        p.chmod(0o755)
+    except OSError:
+        pass
+    return p
+
+
+def _detach_restart_and_probe(port: int, retries: int, interval: int,
+                              old: Path, stage: Path | None) -> dict:
+    """把「restart → 轮询端口 → 失败回滚」交给 detach 出去的独立进程。
+
+    v1.24.4（P0-3）。这里必须**立刻返回**：本进程马上会被 systemctl 杀掉，
+    后续探测与回滚由 _HEALTH_PROBE_SCRIPT 那个独立进程完成，它持有 old/ 的
+    清理权（成功删、失败保留现场）。因此本函数返回 ok=True 且 detach=True，
+    _apply_zip 见到 detach 就不再同步清理 old/。
+
+    两种 detach 手段，按「能不能活过本次 restart」排序：
+
+    ① `systemd-run --no-block --unit=m7a-update-probe-<pid> ...`：把脚本放进
+       **独立的 transient unit**，因此不在本服务的 cgroup 里。`systemctl restart`
+       的默认 KillMode=control-group 只会杀本服务 cgroup 内的进程 —— 独立 unit
+       的探测脚本不受影响，能完整跑完「restart → 轮询 → 失败回滚」。这是首选。
+    ② 退化：`setsid ... &`。它脱离会话但**仍在同一 cgroup**，restart 时会被连带
+       杀掉 —— 探测与回滚就失去保障。仅在 ① 不可用时使用（例如非 root 运行、
+       polkit 拒绝 "Interactive authentication required"），此时 msg 会明确告知
+       探测能力已降级，运维需人工确认新版本是否起来。
+    """
+    script = _write_probe_script()
+    argv = [
+        _probe_python(), str(script),
+        str(cfg.BASE_DIR), str(old), str(stage or ""), str(port),
+        str(retries), str(interval), _RESTART_UNIT,
+    ]
+    # 用单引号包裹每个参数，避免路径里的空格/特殊字符被 shell 拆开
+    quoted = " ".join("'" + a.replace("'", "'\\''") + "'" for a in argv)
+
+    # —— ① 独立 transient unit（首选，能活过 restart）——
+    if shutil.which("systemd-run"):
+        unit = f"m7a-update-probe-{os.getpid()}"
+        cmd = f"systemd-run --no-block --collect --unit={unit} {quoted}"
+        try:
+            r = run_cmd(cmd, timeout=10)
+        except Exception:
+            r = {"code": 1, "out": ""}
+        if r.get("code") == 0:
+            return {
+                "ok": True, "skipped": False, "probe_ok": False, "detach": True,
+                "detach_mode": "systemd-run",
+                "msg": (f"，面板正在重启（独立单元 {unit} 探测 127.0.0.1:{port}，"
+                        f"失败会自动回滚并保留日志 {old}.probe.log）"),
+            }
+        # 失败（多为 polkit 权限）→ 落②，不把权限错误当成更新失败
+
+    # —— ② 退化：setsid 脱离会话（不需要权限，但会被 cgroup 连带杀掉）——
+    cmd = f"setsid {quoted} >/dev/null 2>&1 </dev/null &"
+    try:
+        r = run_cmd(cmd, timeout=10)
+    except Exception as e:
+        return {"ok": False, "skipped": False, "probe_ok": False, "detach": False,
+                "msg": f"无法 detach 重启进程（{e}），请手动重启面板"}
+    if r.get("code") != 0:
+        return {"ok": False, "skipped": False, "probe_ok": False, "detach": False,
+                "msg": (f"无法 detach 重启进程（{r.get('code')} "
+                        f"{(r.get('out') or '').strip()[:120]}），请手动重启面板")}
+    return {
+        "ok": True, "skipped": False, "probe_ok": False, "detach": True,
+        "detach_mode": "setsid",
+        "msg": (f"，面板正在重启（setsid 探测 127.0.0.1:{port}；注意：本机无法建"
+                f"独立 systemd 单元，探测进程可能随重启被杀，失败自动回滚不保证，"
+                f"日志见 {old}.probe.log）"),
+    }
+
+
+def _restart_and_health_check(port: int = 0, retries: int = 3, interval: int = 2,
+                              old: Path | None = None, stage: Path | None = None) -> dict:
+    """更新后重启 m7a-panel 并确认本地端口就绪；失败返回失败原因。
+
+    三种部署形态：
+    - systemd 且**本进程就在该单元内**（正常部署）：detach 一个独立脚本去做
+      「restart → 轮询 HTTP 127.0.0.1:<port>/ → 失败自动回滚」，本进程立即返回，
+      随后被 systemd 杀掉也不影响探测与回滚（v1.24.4 P0-3）。
+    - systemd 但本进程不在该单元内（pytest / 手工前台运行）：同步 restart +
+      轮询 HTTP 127.0.0.1:<port>/ 直到 200 或超时，失败由 _apply_zip 回滚。
+    - cron 看门狗 / 手动托管：不强行重启，返回 skipped=True 让上层提示用户手动处理。
+
+    v1.24.4（P0-6）：端口默认取 cfg.LISTEN_PORT，不再硬编码 9999（部署普遍是 8787）。
+    """
+    port = int(port or cfg.LISTEN_PORT)
     try:
         r = run_cmd("systemctl is-active m7a-panel", timeout=10)
         first = (r["out"] or "").strip().split("\n")[0]
@@ -649,8 +1146,13 @@ def _restart_and_health_check(port: int = 9999, retries: int = 3, interval: int 
             "msg": "未检测到 systemd 服务 m7a-panel，请手动重启面板后生效",
         }
 
-    # systemd：同步重启 + 轮询探测
-    r = run_cmd("systemctl restart m7a-panel", timeout=30)
+    # —— 形态一：本进程就在该单元内 → detach，交给独立脚本 restart+探测+回滚 ——
+    # 绝不能在这里原地 systemctl restart 自己：见 _self_under_unit() 的说明。
+    if old is not None and _self_under_unit():
+        return _detach_restart_and_probe(port, retries, interval, old, stage)
+
+    # —— 形态二：systemd 托管但本进程不在单元内（测试 / 前台手工）→ 同步重启 + 探测 ——
+    r = run_cmd(f"systemctl restart {_RESTART_UNIT}", timeout=30)
     if r.get("code") != 0:
         return {"ok": False, "skipped": False, "probe_ok": False,
                 "msg": f"systemctl restart 失败：{(r.get('out') or '').strip()}"}
@@ -684,12 +1186,17 @@ def _apply_zip(data: bytes, expect_ver: str) -> dict:
 
     v1.22.1：版本复核通过后再校验/重建 panel_migr/.venv，失败走与版本复核失败
     完全相同的回滚路径（否则新代码换入但运行环境缺失 → 203/EXEC 起不来）。
-    v1.24.1：换入 + 运行环境就绪后，同步重启 m7a-panel 并轮询 127.0.0.1:9999 直到
-    HTTP 200；探测失败走回滚，绝不让「代码起不来 → 面板失联」再发生。
+    v1.24.1：换入 + 运行环境就绪后重启 m7a-panel 并轮询本地端口直到 HTTP 200；
+    探测失败走回滚，绝不让「代码起不来 → 面板失联」再发生。
+    v1.24.4：
+    - P1-3：中间目录名带 pid + 随机后缀，同秒并发不再共用同一个 .stage_/.old_；
+    - P0-2：回滚失败时**保留 old/ 现场**（它是旧代码唯一副本），文案如实告知；
+    - P0-3：detach 形态下 old/ 的清理权移交给独立探测进程，此处不删。
     """
     ts = time.strftime("%Y%m%d%H%M%S")
-    stage = backups_dir() / f".stage_{ts}"
-    old = backups_dir() / f".old_{ts}"
+    tag = f"{ts}_{os.getpid()}_{secrets.token_hex(2)}"
+    stage = backups_dir() / f".stage_{tag}"
+    old = backups_dir() / f".old_{tag}"
     rebuilt = False
     hr: dict = {"ok": True, "skipped": True, "probe_ok": False, "msg": ""}
     try:
@@ -702,26 +1209,64 @@ def _apply_zip(data: bytes, expect_ver: str) -> dict:
         if not rt.get("ok"):
             raise RuntimeError(rt.get("msg") or "运行环境校验失败")
         rebuilt = bool(rt.get("rebuilt"))
-        hr = _restart_and_health_check()
+        hr = _restart_and_health_check(old=old, stage=stage)
         if not hr.get("ok") and not hr.get("skipped"):
             raise RuntimeError(hr.get("msg") or "重启后健康探测失败")
     except Exception as e:
+        # v1.24.4（P0-2）：回滚结果必须如实反映到消息里。此前 _restore_old 的异常
+        # 被 `except Exception: pass` 静默吞掉，紧接着 _cleanup_dirs 删掉 old/ ——
+        # 旧代码唯一副本没了，文案还谎称「已回滚」。
+        rb = {"ok": True, "restored": 0, "failed": 0, "errors": []}
         try:
-            _restore_old(old)
-        except Exception:
-            pass
+            rb = _restore_old(old)
+        except Exception as re:
+            rb = {"ok": False, "restored": 0, "failed": 1, "errors": [str(re)]}
+        if not rb.get("ok"):
+            detail = "；".join(rb.get("errors") or []) or "未知原因"
+            return {
+                "ok": False, "rolled_back": False, "old_dir": str(old),
+                "msg": (f"更新失败，且自动回滚未完成：{e}（回滚错误：{detail}）。"
+                        f"旧代码已保留在 {old}，请人工恢复后再重启面板"),
+            }
         _cleanup_dirs(stage, old)
-        return {"ok": False, "msg": f"更新失败已回滚：{e}"}
+        return {"ok": False, "rolled_back": True, "msg": f"更新失败已回滚：{e}"}
+    if hr.get("detach"):
+        # 重启/探测/回滚由独立进程完成，old/ 的清理权也在它手里：此处只清 stage/
+        _cleanup_dirs(stage)
+        return {"ok": True, "msg": hr.get("msg", ""), "rebuilt": rebuilt,
+                "probe_ok": False, "skipped": False, "detach": True}
     _cleanup_dirs(stage, old)
     return {"ok": True, "msg": hr.get("msg", ""), "rebuilt": rebuilt,
             "probe_ok": hr.get("probe_ok", False), "skipped": hr.get("skipped", False)}
 
 
 def do_update() -> dict:
+    """在线更新入口：非阻塞获取更新互斥锁后执行（v1.24.4 P1-3）。
+
+    两次更新撞在同一秒时，旧代码会用同一个 `.stage_<ts>`/`.old_<ts>` 目录名，
+    互相 rmtree 对方正在使用的目录。这里在入口处非阻塞拿锁，拿不到直接拒绝，
+    不排队（排队会让第二个请求在面板被杀后悬空）。
+    """
+    if not _UPDATE_LOCK.acquire(blocking=False):
+        return {"ok": False, "msg": "已有更新正在进行，请稍后再试"}
+    try:
+        return _do_update_locked()
+    finally:
+        _UPDATE_LOCK.release()
+
+
+def _do_update_locked() -> dict:
     """在线更新：v1.20 起下载 Release 整包 ZIP 自更新；
     旧版 release（无 zip 资产，PHP 时代）回退 index.php 流程。"""
     if not cfg.UPDATE_ENABLED:
         return {"ok": False, "msg": "未启用自动更新"}
+
+    # v1.24.4（P1-4）：先清理/恢复上次被 SIGKILL 打断留下的 .stage_*/.old_*。
+    # 必须持锁后做，否则可能误删另一条更新线程正在使用的目录。
+    try:
+        _recover_interrupted()
+    except Exception:
+        pass
 
     j, rerr = _release_json()
     if isinstance(j, dict):
@@ -770,7 +1315,11 @@ def do_update() -> dict:
                         "msg": f"更新包版本（{newver}）与 Release 版本（{latest}）不一致，已中止"}
             bak = _backup_panel_zip(cfg.PANEL_VERSION)
             if bak == "":
-                return {"ok": False, "msg": "备份当前面板失败（请检查 backups 目录权限），已中止更新"}
+                # v1.24.4（P1-5）：如实转述真实原因。此前一律甩「请检查 backups
+                # 目录权限」，而在代码/数据分离布局下真正的原因是「一个文件都没
+                # 打包到」，运维会照着权限方向白查。
+                why = _LAST_BACKUP_ERR or "未知原因"
+                return {"ok": False, "msg": f"备份当前面板失败：{why}，已中止更新"}
             res = _apply_zip(data, newver)
             if not res["ok"]:
                 return res
@@ -817,11 +1366,30 @@ def do_update() -> dict:
 
 # ===== 小助手镜像 =====
 
+def _ghcr_auth(token: str) -> str:
+    """GHCR 鉴权头的**唯一**构造点（v1.24.4 P1-6）。
+
+    此前 ghcr_latest_created 里先拼好 `auth = "Bearer " + token`，再调用
+    ghcr_config_created("Authorization: " + auth, ...)，而后者内部又写成
+    headers={"Authorization": auth} → 实际发出
+    `Authorization: Authorization: Bearer ey...`，blob 请求必然 401，
+    镜像构建时间恒为空。现在统一在这里加一次前缀，调用方只传裸 token。
+    """
+    t = (token or "").strip()
+    if t.lower().startswith("authorization:"):
+        t = t.split(":", 1)[1].strip()
+    if t.lower().startswith("bearer "):
+        t = t[7:].strip()
+    return "Bearer " + t
+
+
 def ghcr_config_created(auth: str, base: str, digest: str, timeout: int = 10) -> str:
+    """取镜像 config blob 的 created 时间；auth 只传裸 token（前缀由 _ghcr_auth 加）。"""
     try:
         r = httpx.get(
             base + "/blobs/" + digest,
-            headers={"Authorization": auth, "Accept": "application/vnd.oci.image.config.v1+json"},
+            headers={"Authorization": _ghcr_auth(auth),
+                     "Accept": "application/vnd.oci.image.config.v1+json"},
             timeout=httpx.Timeout(timeout, connect=5), follow_redirects=True,
         )
         j = r.json() if r.status_code == 200 else None
@@ -843,9 +1411,8 @@ def ghcr_latest_created(timeout: int = 10) -> str:
         token = str((r.json() or {}).get("token") or "")
         if token == "":
             return ""
-        auth = "Bearer " + token
         ah = dict(hdr)
-        ah["Authorization"] = auth
+        ah["Authorization"] = _ghcr_auth(token)   # v1.24.4 P1-6：唯一构造点
         ah["Accept"] = ",".join([
             "application/vnd.oci.image.index.v1+json",
             "application/vnd.docker.distribution.manifest.list.v2+json",
@@ -860,13 +1427,13 @@ def ghcr_latest_created(timeout: int = 10) -> str:
         if not isinstance(j, dict):
             return ""
         if isinstance(j.get("config"), dict) and j["config"].get("digest"):
-            return ghcr_config_created("Authorization: " + auth, base, j["config"].get("digest"), timeout)
+            return ghcr_config_created(token, base, j["config"].get("digest"), timeout)
         manifests = j.get("manifests") or []
         digest = manifests[0].get("digest", "") if manifests else ""
         if digest == "":
             return ""
         ah2 = dict(hdr)
-        ah2["Authorization"] = auth
+        ah2["Authorization"] = _ghcr_auth(token)  # v1.24.4 P1-6：唯一构造点
         ah2["Accept"] = ",".join([
             "application/vnd.oci.image.index.v1+json",
             "application/vnd.docker.distribution.manifest.list.v2+json",
@@ -883,7 +1450,7 @@ def ghcr_latest_created(timeout: int = 10) -> str:
         cfgdg = ((j3 or {}).get("config") or {}).get("digest", "")
         if not cfgdg:
             return ""
-        return ghcr_config_created("Authorization: " + auth, base, cfgdg, timeout)
+        return ghcr_config_created(token, base, cfgdg, timeout)
     except Exception:
         return ""
 
@@ -991,15 +1558,28 @@ def _write_cache(data: dict) -> None:
 
 
 def _to_ts(s: str):
-    """strtotime() 子集：ISO8601 / RFC 时间 → 时间戳；失败 False。"""
+    """strtotime() 子集：ISO8601 / RFC 时间 → 时间戳；失败 False。
+
+    v1.24.4（P1-6）：此前用 `s[:25].replace("Z","+0000")` 配 strptime，而 GHCR 的
+    created 形如 `2026-10-21T22:37:22.870489069Z`（9 位纳秒）：截到 25 字符正好把
+    结尾的 Z 切掉，`%z` 匹配失败 → 恒返回 False。现在先把纳秒/毫秒截到微秒，再交给
+    fromisoformat（3.11+ 能吃 Z），失败再退回几种常见格式。
+    """
     from datetime import datetime
     s = (s or "").strip()
     if not s:
         return False
-    for fmt in ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+    cand = re.sub(r"\.(\d{6})\d+", r".\1", s)          # 纳秒 → 微秒
+    cand = re.sub(r"\.(\d{3})\d+", r".\1", cand)       # 毫秒 → 微秒的兜底
+    cand = cand.replace("Z", "+00:00").replace("z", "+00:00")
+    try:
+        return int(datetime.fromisoformat(cand).timestamp())
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z",
+                "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
         try:
-            dt = datetime.strptime(s[:25].replace("Z", "+0000"), fmt)
-            return int(dt.timestamp())
+            return int(datetime.strptime(cand, fmt).timestamp())
         except ValueError:
             continue
     return False

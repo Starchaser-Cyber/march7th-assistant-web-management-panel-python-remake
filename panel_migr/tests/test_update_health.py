@@ -12,6 +12,7 @@ import zipfile
 
 import pytest
 
+import config as cfg
 from services import updateops as uo
 
 
@@ -77,6 +78,9 @@ def _call_health(monkeypatch, run_out: str, run_code: int,
 
     def _http(url, timeout=5):
         counts["http"] += 1
+        # v1.24.4（P0-6）：必须校验探测端口。此前这个假 _http 忽略 url 参数，
+        # 硬编码 9999 的端口 bug 因此从未被测试发现。端口取自 cfg.LISTEN_PORT。
+        assert url == f"http://127.0.0.1:{cfg.LISTEN_PORT}/", url
         return {"code": http_code, "body": ""} if counts["http"] <= http_calls else {"code": 0, "body": ""}
 
     monkeypatch.setattr(uo, "run_cmd", _run)

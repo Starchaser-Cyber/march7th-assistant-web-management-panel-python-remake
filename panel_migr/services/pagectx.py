@@ -109,14 +109,21 @@ def _panel_context(request, inst: dict, notify_check) -> dict:
         mon_key = secrets.token_hex(16)
         panel_config_save({"monitor_key": mon_key})
     mon_iv = max(1, int(mon.get("monitor_interval") or 1))
-    mon_cron = f'curl -s "{base}/action?monitor_sampler=1&key={mon_key}" >/dev/null 2>&1'
+    # P1-22：key 走 X-M7A-Key 头（后端默认只认头；?key= 会落到 access log/Referer）
+    mon_cron = (
+        f'curl -s -H "X-M7A-Key: {mon_key}" "{base}/action?monitor_sampler=1"'
+        " >/dev/null 2>&1"
+    )
 
     # [4] alerter key 惰性生成 + cron 行
     al_key = str(mon.get("alerter_key") or "")
     if not al_key:
         al_key = secrets.token_hex(16)
         panel_config_save({"alerter_key": al_key})
-    al_cron = f'curl -s "{base}/action?alerter=1&key={al_key}" >/dev/null 2>&1'
+    al_cron = (
+        f'curl -s -H "X-M7A-Key: {al_key}" "{base}/action?alerter=1"'
+        " >/dev/null 2>&1"
+    )
 
     # [5] 最近日志名
     lp = latest_log_path(inst)
@@ -135,7 +142,10 @@ def _panel_context(request, inst: dict, notify_check) -> dict:
     if not sch_key:
         sch_key = secrets.token_hex(16)
         panel_config_save({"scheduler_key": sch_key})
-    sch_cron = f'curl -s "{base}/action?scheduler=1&key={sch_key}" >/dev/null 2>&1'
+    sch_cron = (
+        f'curl -s -H "X-M7A-Key: {sch_key}" "{base}/action?scheduler=1"'
+        " >/dev/null 2>&1"
+    )
     sch_builtin = config_scheduled_tasks_count(inst)
     sched_day_name = {1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 7: "日"}
 

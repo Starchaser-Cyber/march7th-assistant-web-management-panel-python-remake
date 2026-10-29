@@ -123,11 +123,24 @@ if (PANEL_UPDATE_MODE === 'auto') { setTimeout(function(){ checkUpdate(false); }
 setTimeout(function(){ checkImage(false); }, 2200);
 
 /* ===== 配置子页切换 ===== */
-function switchCfgTab(name) {
+function switchCfgTab(name, ev) {
+  // v1.24.4：不再依赖隐式全局 event（Firefox/严格模式为 undefined）。
+  // 兼容旧模板 onclick="switchCfgTab('form')"：无第二参时回退 window.event。
+  ev = ev || window.event || null;
   document.querySelectorAll('.cfg-panel').forEach(function(el) { el.classList.remove('active'); });
   document.querySelectorAll('.cfg-tab').forEach(function(el) { el.classList.remove('active'); });
-  document.getElementById('cfgPanel-' + name).classList.add('active');
-  event.target.classList.add('active');
+  var panel = document.getElementById('cfgPanel-' + name);
+  if (panel) panel.classList.add('active');
+  var tgt = ev ? (ev.currentTarget || ev.target) : null;
+  if (tgt && tgt.classList && tgt.classList.contains('cfg-tab')) {
+    tgt.classList.add('active');
+  } else {
+    // 拿不到事件源时按 name 反查（tab 的 onclick 里带的就是 name）
+    document.querySelectorAll('.cfg-tab').forEach(function(el) {
+      var oc = el.getAttribute('onclick') || '';
+      if (oc.indexOf("switchCfgTab('" + name + "'") >= 0) el.classList.add('active');
+    });
+  }
 }
 
 /* ===== v1.15+：折叠分组展开 / 收起 ===== */
@@ -195,7 +208,7 @@ function checkUpdate(force) {
 function doUpdate() {
   var btn = document.getElementById('updBtn');
   if (btn.disabled) return;
-  btn.disabled = true; btn.textContent = '更新中…';
+  if (btn) { btn.disabled = true; btn.textContent = '更新中…'; }
   var fd = new FormData();
   fd.append('action', 'do_update');
   var csrf = document.querySelector('input[name="csrf"]');
@@ -255,11 +268,13 @@ function ignoreVersion() {
   document.getElementById('updateBanner').style.display = 'none';
 }
 
-function updateAssistantImage() {
+function updateAssistantImage(ev) {
+  // v1.24.4：显式事件源（兼容旧模板 onclick="updateAssistantImage()"）
+  ev = ev || window.event || null;
+  var btn = (ev && (ev.currentTarget || ev.target)) || null;
   if (!confirm('确定更新三月七小助手镜像？将依次尝试官方源与加速镜像（南大/DaoCloud/dockerproxy），可能需要几分钟。')) return;
-  var btn = event.target;
-  var oldTxt = btn.textContent;
-  btn.disabled = true; btn.textContent = '更新中…';
+  var oldTxt = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '更新中…'; }
   var fd = new FormData();
   fd.append('action', 'update_image');
   var csrf = document.querySelector('input[name="csrf"]');
@@ -273,9 +288,9 @@ function updateAssistantImage() {
       } else {
         alert('❌ ' + (d && d.err ? d.err : '更新失败'));
       }
-      btn.disabled = false; btn.textContent = oldTxt;
+      if (btn) { btn.disabled = false; btn.textContent = oldTxt; }
     })
-    .catch(function(){ alert('❌ 网络错误'); btn.disabled = false; btn.textContent = oldTxt; });
+    .catch(function(){ alert('❌ 网络错误'); if (btn) { btn.disabled = false; btn.textContent = oldTxt; } });
 }
 
 function checkImage(force) {
@@ -1602,7 +1617,7 @@ function searchRender(q) {
     return (it.main + ' ' + (it.sub || '') + ' ' + (it.kw || '')).toLowerCase().indexOf(q) >= 0;
   }).slice(0, 20);
   if (!_searchHits.length) {
-    box.innerHTML = '<div class="search-hint">没有找到「' + q + '」相关内容</div>';
+    box.innerHTML = '<div class="search-hint">没有找到「' + escapeHtml(q) + '」相关内容</div>';
     return;
   }
   box.innerHTML = _searchHits.map(function(it, i) {

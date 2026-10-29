@@ -4,8 +4,8 @@
 
 ![许可证](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Python 版本](https://img.shields.io/badge/python-3.11%2B-green)
-![最新版本](https://img.shields.io/badge/version-V1.24.3-orange)
-![构建状态](https://img.shields.io/badge/build-318%20tests%20passing-brightgreen)
+![最新版本](https://img.shields.io/badge/version-V1.24.4-orange)
+![构建状态](https://img.shields.io/badge/build-493%20tests%20passing-brightgreen)
 ![Stars](https://img.shields.io/github/stars/Starchaser-Cyber/march7th-assistant-web-management-panel-python-remake?style=flat)
 
 ## 项目详细介绍
@@ -441,7 +441,8 @@ curl -s "http://你的面板地址/action?scheduler=1&key=自动生成的key" >/
 | `M7A_PANEL_VERSION` | 面板版本号（页面显示） | 语义化版本字符串 | `1.20` |
 | `M7A_UPDATE_HOST` / `M7A_UPDATE_OWNER` / `M7A_UPDATE_REPO` | 自更新来源仓库 | URL / 仓库名 | `https://github.com` / `starchaser-cyber` / `march7th-assistant-web-management-panel-python-remake` |
 | `M7A_PHP_UPSTREAM` | 旧版回源地址（与旧版共存时使用） | URL | `http://127.0.0.1:9999` |
-| `M7A_SESSION_DIR` | 登录态共享目录（与旧版面板互通） | 目录路径 | `/tmp` |
+| `M7A_SESSION_DIR` | 登录态目录（与旧版 PHP 面板互通时指向其 `session.save_path`） | 目录路径 | `BASE_DIR/sessions`（面板自身目录下的 `sessions/`） |
+| `M7A_SESSION_MODE` | 会话文件权限（八进制，如 `660`） | `600`–`666` | `660` |
 | `M7A_PREVIEW_UP_PORT` | 预览帧源端口（容器内） | 1–65535 | `9223` |
 | `M7A_PREVIEW_SECRET` | 预览令牌文件路径 | 文件路径 | `{小助手目录}/logs/preview_secret` |
 | `M7A_PREVIEW_SCRIPT` | 容器内预览组件路径 | 路径 | `/m7a/logs/preview_server.py` |
@@ -525,7 +526,9 @@ python3 -m venv .venv
 
 **4. 登录后立即被弹回登录页？**
 
-多为登录态不互通。确认 `M7A_SESSION_DIR` 指向的目录与旧版面板 `session.save_path` 一致（默认 `/tmp`）；若面板以不同系统用户运行，检查该目录的读写权限。
+多为登录态不互通。默认会话目录是面板目录下的 `sessions/`（`BASE_DIR/sessions`），文件权限默认 `0660`，可用 `M7A_SESSION_MODE` 调整；只有与旧版 PHP 面板共用登录态时才需要把 `M7A_SESSION_DIR` 指到它的 `session.save_path`。若面板以不同系统用户运行，检查该目录的读写权限。
+
+> ⚠️ **安全提示**：不要把 `M7A_SESSION_DIR` 指向 `/tmp` 等全局可写目录。session 文件里就是登录态（`m7a_panel_auth|b:1;`），全局可写目录下任何本机账号都能新建/改写会话文件伪造管理员登录（M7A-02）。确需共享时请用「专用目录 + 同组 + `0660`」。
 
 **5. 页面能开但数据不刷新 / WebSocket 连不上？**
 

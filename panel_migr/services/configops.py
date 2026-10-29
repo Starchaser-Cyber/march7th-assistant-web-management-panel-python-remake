@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import html
 import json
+import os
 import re
+import secrets
 import time
 from pathlib import Path
 
@@ -22,6 +24,25 @@ NOTIFY_RULES: list = _TABLES["notify_rules"]
 def h(s) -> str:
     """等价 PHP h() = htmlspecialchars(ENT_QUOTES, UTF-8)。"""
     return html.escape(str(s), quote=True)
+
+
+def _atomic_write_text(path, text: str) -> None:
+    """config.yaml 原子写（临时文件 + os.replace），避免并发读者读到半截文件。
+
+    mkstemp 建出的临时文件是 0600，直接 replace 会把 config.yaml 权限从 0644
+    降成 0600（容器内非 root 进程可能读不到）→ 沿用原文件权限。
+    """
+    import os as _os
+    import stat as _stat
+
+    from phpfile import atomic_write_text
+
+    mode = None
+    try:
+        mode = _stat.S_IMODE(_os.stat(str(path)).st_mode)
+    except OSError:
+        mode = None
+    atomic_write_text(path, text, mode=mode)
 
 
 # ===== 配置字段索引 =====
@@ -169,7 +190,11 @@ def notify_check_html(res) -> str:
 
 # ===== config.yaml 读写 =====
 
-def config_read_raw(inst: dict, max_bytes: int = 65536):
+# config.yaml 读/写上限（面板 YAML 编辑器整份载入 → 两者必须一致，否则保存即静默截断）
+CONFIG_MAX_BYTES = 1024 * 1024
+
+
+def config_read_raw(inst: dict, max_bytes: int = CONFIG_MAX_BYTES):
     p = Path(instance_config(inst))
     if not p.is_file():
         return None
@@ -208,7 +233,7 @@ def yaml_read_simple(inst: dict) -> dict:
                     break
         mq = re.match(r'^"((?:[^"\\]|\\.)*)"\s*(#.*)?$', raw)
         if mq:
-            val = _stripslashes(mq.group(1))
+            val = _yaml_unescape(mq.group(1))
         else:
             ms = re.match(r"^'((?:[^'\\]|\\.)*)'\s*(#.*)?$", raw)
             if ms:
@@ -223,6 +248,82 @@ def yaml_read_simple(inst: dict) -> dict:
 def _stripslashes(s: str) -> str:
     """等价 PHP stripslashes()。"""
     return re.sub(r"\\(.)", r"\1", s)
+
+
+_YAML_ESCAPES = {
+    "0": "\0",
+    "a": "\a",
+    "b": "\b",
+    "t": "\t",
+    "\t": "\t",
+    "n": "\n",
+    "v": "\v",
+    "f": "\f",
+    "r": "\r",
+    "e": "\x1b",
+    " ": " ",
+    '"': '"',
+    "/": "/",
+    "\\": "\\",
+    "N": "\x85",
+    "_": "\xa0",
+    "L": "\u2028",
+    "P": "\u2029",
+}
+
+
+def _yaml_unescape(s: str) -> str:
+    """还原 YAML 双引号字符串里的转义序列（`\\n`→换行、`\\t`→制表符、`\\\\`→反斜杠…）。
+
+    不能用 PHP 的 stripslashes()：它会把 `\\n`（两字符）错解成 `n`，导致多行值
+    读回后丢掉换行，再保存一次就把 config.yaml 写成非法 YAML。
+    """
+    if "\\" not in s:
+        return s
+
+    out: list = []
+    i = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if c != "\\" or i + 1 >= n:
+            out.append(c)
+            i += 1
+            continue
+        nxt = s[i + 1]
+        if nxt == "x" and i + 3 < n:
+            try:
+                out.append(chr(int(s[i + 2:i + 4], 16)))
+                i += 4
+                continue
+            except ValueError:
+                pass
+        if nxt == "u" and i + 5 < n:
+            try:
+                out.append(chr(int(s[i + 2:i + 6], 16)))
+                i += 6
+                continue
+            except ValueError:
+                pass
+        out.append(_YAML_ESCAPES.get(nxt, nxt))
+        i += 2
+    return "".join(out)
+
+
+def _yaml_dq(val) -> str:
+    """任意值 → 合法的 YAML 双引号标量（保证单行、换行/制表/引号全部转义）。"""
+    s = str(val)
+    s = (
+        s.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
+    # 其它控制字符：YAML 双引号里必须转义，否则整份文件非法
+    if any(ord(c) < 0x20 and c not in "\n\r\t" for c in s):
+        s = "".join("\\x%02x" % ord(c) if (ord(c) < 0x20 or ord(c) == 0x7F) else c for c in s)
+    return '"' + s + '"'
 
 
 def _php_float_str(v: float) -> str:
@@ -252,9 +353,111 @@ def yaml_format_val(val, typ: str):
     if typ == "password":
         if val == "" or val is None:
             return None
-        return '"' + str(val).replace("\\", "\\\\").replace('"', '\\"') + '"'
-    # str / select
-    return '"' + str(val).replace("\\", "\\\\").replace('"', '\\"') + '"'
+        return _yaml_dq(val)
+    # str / select / textarea
+    return _yaml_dq(val)
+
+
+def _split_yaml_comment(rest: str) -> tuple[str, str]:
+    """把 `值  # 注释` 拆成 (值, 注释)；引号内的 `#` 不算注释。
+
+    textarea 类字段（webhook body / headers）常见 `#` 与 `"`，若按裸正则切注释，
+    会把值本身当成注释丢掉，两轮保存后内容被改写。
+    """
+    quote = ""
+    esc = False
+    for i, c in enumerate(rest):
+        if esc:
+            esc = False
+            continue
+        if c == "\\" and quote:
+            esc = True
+            continue
+        if quote:
+            if c == quote:
+                quote = ""
+            continue
+        if c in "\"'":
+            quote = c
+            continue
+        if c == "#" and (i == 0 or rest[i - 1] in " \t"):
+            return rest[:i], rest[i:].rstrip("\r\n")
+    return rest.rstrip("\r\n"), ""
+
+
+_DQ_FULL = re.compile(r'^"(?:[^"\\]|\\.)*"$')
+
+
+def _has_unclosed_quote(val: str) -> bool:
+    """值以 `"` 开头但不是完整的双引号标量（旧版把多行值原样塞进引号的形态）。"""
+    v = val.strip()
+    if not v.startswith('"'):
+        return False
+    return _DQ_FULL.match(v) is None
+
+
+def _closes_quote(line: str) -> bool:
+    """续行里是否出现了未转义的闭合双引号。"""
+    esc = False
+    for c in line:
+        if esc:
+            esc = False
+        elif c == "\\":
+            esc = True
+        elif c == '"':
+            return True
+    return False
+
+
+def _escape_controls(text: str) -> str:
+    """把裸控制字符（换行/回车/制表/其它）换成 YAML 双引号内的转义序列。"""
+    out = []
+    for c in text:
+        if c == "\n":
+            out.append("\\n")
+        elif c == "\r":
+            out.append("\\r")
+        elif c == "\t":
+            out.append("\\t")
+        elif ord(c) < 0x20 or ord(c) == 0x7F:
+            out.append("\\x%02x" % ord(c))
+        else:
+            out.append(c)
+    return "".join(out)
+
+
+_PLAIN_UNSAFE = re.compile(r'[\x00-\x1f\x7f]')
+
+
+def _needs_quote(val: str) -> bool:
+    """裸标量是否会写坏/误解析 YAML（多行、控制字符、首尾空白、空值、特殊首字符）。"""
+    if val == "" or val != val.strip():
+        return True
+    if _PLAIN_UNSAFE.search(val):
+        return True
+    if val[0] in "-?:,[]{}#&*!|>'\"%@`":
+        return True
+    if ": " in val or val.endswith(":"):
+        return True   # `k: a: b` 裸写会变成映射/非法 YAML
+    if val.lower() in ("true", "false", "yes", "no", "on", "off", "null", "~"):
+        return True
+    return False
+
+
+def _dq_wrap(val: str) -> str:
+    """保证返回值是单行、合法的 YAML 双引号标量。
+
+    调用方（routers/write.py::_form_updates）对 password 字段自行拼了引号，
+    这里兼容两种入参：已正确加引号的值只补转义裸控制字符（不破坏原有 `\\n`），
+    其它一律当原始值整体转义包裹。
+    """
+    s = str(val)
+    if len(s) >= 2 and s[0] == '"' and s[-1] == '"':
+        inner = s[1:-1]
+        if re.fullmatch(r'(?:[^"\\]|\\.)*', inner):
+            return '"' + _escape_controls(inner) + '"'
+        # 内部仍有裸引号 → 不是合法 YAML 标量，整串当原始值重新转义
+    return _yaml_dq(s)
 
 
 def config_save_form(inst: dict, updates: dict) -> dict:
@@ -265,24 +468,55 @@ def config_save_form(inst: dict, updates: dict) -> dict:
         lines = p.read_text("utf-8", "replace").splitlines(keepends=True)
     except OSError:
         return {"ok": False, "msg": "无法读取 config.yaml"}
+    # v1.24.4：字符串值走双引号转义，杜绝多行值写坏整份 YAML；
+    # 但 bool/int/float 必须保持裸标量，否则 `true` 会变成字符串 "true"、`3600` 变成 "3600"。
+    idx = config_field_index()
+    typed: dict = {}
+    for k, v in updates.items():
+        if not isinstance(v, str):
+            typed[k] = v
+            continue
+        typ = (idx.get(k) or {}).get("type")
+        if typ in ("bool", "int", "float"):
+            formatted = yaml_format_val(v, typ)
+            typed[k] = v if formatted is None else formatted
+        elif typ is None:
+            # 未知键：只有确实需要引号时才包，保持旧版裸标量行为
+            typed[k] = _dq_wrap(v) if _needs_quote(v) else v
+        else:
+            typed[k] = _dq_wrap(v)
+    updates = typed
     out: list = []
     changed: list = []
-    for line in lines:
+    n = len(lines)
+    i = 0
+    while i < n:
+        line = lines[i]
+        i += 1
         matched = False
         m = re.match(r"^([a-zA-Z_]\w*):\s*", line)
         if m:
             key = m.group(1)
             if key in updates and updates[key] is not None:
                 rest = line[len(m.group(0)):]
-                cm = re.search(r"#\s*.*$", rest)
-                comment = " " + cm.group(0) if cm else ""
+                _val, cm = _split_yaml_comment(rest)
+                comment = (" " + cm) if cm else ""
                 out.append(f"{key}: {updates[key]}{comment}\n")
                 changed.append(key)
                 matched = True
+                # v1.24.4 修复历史坏文件：旧版把多行值原样塞进双引号，值跨了多行。
+                # 重写该键时把后续续行一并吞掉，否则残留续行仍是非法 YAML。
+                if _has_unclosed_quote(_val):
+                    while i < n and not _closes_quote(lines[i]):
+                        if re.match(r"^[a-zA-Z_]\w*:", lines[i]):
+                            break  # 撞到下一个键：到此为止，别把后面整份文件吞了
+                        i += 1
+                    else:
+                        i += 1 if i < n else 0
         if not matched:
             out.append(line)
     try:
-        p.write_text("".join(out), "utf-8")
+        _atomic_write_text(instance_config(inst), "".join(out))
     except OSError:
         return {"ok": False, "msg": f"写入失败，请检查文件权限：chmod 666 {instance_config(inst)}"}
     return {"ok": True, "msg": f"已更新 {len(changed)} 项配置", "changed": changed}
@@ -291,24 +525,43 @@ def config_save_form(inst: dict, updates: dict) -> dict:
 def config_save_text(inst: dict, content: str) -> dict:
     if "locales:" not in content and "power_enable:" not in content:
         return {"ok": False, "msg": "内容异常，未找到有效配置键，已取消保存"}
+    if len(content.encode("utf-8")) > CONFIG_MAX_BYTES:
+        return {"ok": False, "msg": f"内容过大（上限 {CONFIG_MAX_BYTES // 1024}KB），已取消保存"}
     try:
-        Path(instance_config(inst)).write_text(content, "utf-8")
+        _atomic_write_text(instance_config(inst), content)
     except OSError:
         return {"ok": False, "msg": f"写入失败，请检查文件权限：chmod 666 {instance_config(inst)}"}
     return {"ok": True, "msg": "配置已保存"}
 
 
 def config_backup(inst: dict):
-    """复制 config.yaml → config.yaml.bak.YmdHis；返回路径或 None（等价 PHP copy）。"""
+    """复制 config.yaml → config.yaml.bak.YmdHis.pid.rand；返回路径或 None（等价 PHP copy）。
+
+    加 pid + 随机后缀：同一秒内连续两次保存不再互相覆盖备份。
+    """
     src = Path(instance_config(inst))
     if not src.is_file():
         return None
-    dst = src.with_name("config.yaml.bak." + time.strftime("%Y%m%d%H%M%S"))
-    try:
-        dst.write_bytes(src.read_bytes())
-        return str(dst)
-    except OSError:
-        return None
+    stem = "config.yaml.bak." + time.strftime("%Y%m%d%H%M%S")
+    for _ in range(8):
+        dst = src.with_name(f"{stem}.{os.getpid()}.{secrets.token_hex(3)}")
+        try:
+            fd = os.open(str(dst), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        except FileExistsError:
+            continue
+        except OSError:
+            return None
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(src.read_bytes())
+            return str(dst)
+        except OSError:
+            try:
+                os.unlink(str(dst))
+            except OSError:
+                pass
+            return None
+    return None
 
 
 def restore_config(inst: dict, fname: str, content: bytes | str) -> dict:
@@ -324,7 +577,7 @@ def restore_config(inst: dict, fname: str, content: bytes | str) -> dict:
         return {"ok": False, "msg": "文件内容异常，未识别到有效 YAML 配置"}
     bak = config_backup(inst)
     try:
-        Path(instance_config(inst)).write_text(text, "utf-8")
+        _atomic_write_text(instance_config(inst), text)
     except OSError:
         return {"ok": False, "msg": f"写入失败，请检查文件权限：chmod 666 {instance_config(inst)}"}
     return {

@@ -77,20 +77,41 @@ async def ws_events(websocket: WebSocket) -> None:
                 await _send(e)
                 last = e["seq"]
 
+    # v1.24.4（P1-19）：原实现每条 WS 都用 `asyncio.to_thread(events.wait_new,
+    # last, 15.0)` 阻塞等待，等于每条连接长期占用事件循环默认线程池里的 1 个
+    # 线程。该池上限是 min(32, cpu+4)，超出的连接只能排队：
+    # 实测 20 条并发 to_thread 只用到 min(32,4+4)=8 个线程、且后 12 条串行等到
+    # 0.9s 才返回；生产上表现为「WS 数一多，推送与 15s 保活 ping 一起被推迟」，
+    # 客户端误判连接已死并频繁重连。审计人测到「线程数恒为 10」正是池被占满
+    # 后不再增长的样子，不是没问题的证据。
+    # 改为不占线程的短轮询：每 0.2s 查一次 seq（events_since 是纯内存操作），
+    # 空闲满 15s 发一次 ping。对监控面板而言 ≤200ms 的推送延迟无感。
+    _POLL_IV = 0.2
+    _PING_AFTER = 15.0
+
     async def _sender() -> None:
         nonlocal last
+        idle = 0.0
         while True:
-            rows2, timed_out = await asyncio.to_thread(events.wait_new, last, 15.0)
+            rows2 = events.events_since(last)
             if rows2 is None:
                 cur2 = events.current_seq()
                 await _send({"type": "resync", "seq": cur2})
                 last = cur2
+                idle = 0.0
                 continue
-            for e in rows2:
-                await _send(e)
-                last = e["seq"]
-            if timed_out and not rows2:
+            if rows2:
+                for e in rows2:
+                    await _send(e)
+                    last = e["seq"]
+                idle = 0.0
+                continue
+            if idle >= _PING_AFTER:
                 await _send({"type": "ping", "seq": last})
+                idle = 0.0
+                continue
+            await asyncio.sleep(_POLL_IV)
+            idle += _POLL_IV
 
     async def _receiver() -> None:
         # 只为感知断开；客户端发来的任何消息都忽略

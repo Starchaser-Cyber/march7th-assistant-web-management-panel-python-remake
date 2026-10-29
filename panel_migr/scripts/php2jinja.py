@@ -1,10 +1,19 @@
 #!/usr/bin/env python3
 """index.php 页面段 → Jinja2 模板一次性迁移工具（M5 前端拆包，v2）。
 
+**诚实说明（v1.24.4 修正）**：本脚本只是当年 M5 迁移的一次性辅助工具，
+不是可复现构建步骤 ——
+  1. 输入源 `index.php`（PHP 版面板，页面段在 3193-6227 行）**不在本仓库**，
+     需要从旧 PHP 版本单独取得，本仓库内无法复现 `panel.html.j2`；
+  2. 它**只生成 Jinja 模板**（`templates/panel.html.j2`），**从不生成**
+     `panel_migr/paneldefs.py`；后者是人工整理的面板定义，与模板无自动同步关系。
+因此：仓库里的 `panel.html.j2` 是**已生成产物**，请直接以它为准；除非你手上
+另有原始 index.php，否则不要指望运行本脚本能重建它。
+
 机械规则自动转换；多行/多语句复杂块原样保留并汇总到 stdout 清单，由人工转换。
 PHP 函数（container_status/format_size/count/empty/is_file/basename/strtoupper/
 trim/in_array/instance_*/…）保留原名，运行期由 render_context 注入 Jinja globals。
-用法：python3 scripts/php2jinja.py [源 index.php] [目标模板]
+用法：python3 scripts/php2jinja.py <源 index.php> [目标模板]
 """
 from __future__ import annotations
 

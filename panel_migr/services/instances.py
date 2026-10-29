@@ -68,7 +68,7 @@ def panel_config() -> dict:
 
 def panel_config_save(updates: dict) -> bool:
     """等价 PHP panel_config_load()+save()：合并写回 var_export 格式 + chmod 0600。"""
-    from phpfile import atomic_write_text, dump_php_return_comment
+    from phpfile import atomic_write_text, dump_php_return_comment, invalidate_php_cache
 
     cfg = dict(panel_config())
     cfg.update(updates)
@@ -79,9 +79,11 @@ def panel_config_save(updates: dict) -> bool:
             dump_php_return_comment(cfg, "面板自身配置（自动生成，v1.6+）"),
             mode=0o600,
         )
-        return True
     except OSError:
         return False
+    # 同秒内重写 mtime/size 可能不变 → 显式失效缓存，否则读到旧配置
+    invalidate_php_cache(str(path))
+    return True
 
 
 def _panel_config_path():
@@ -120,9 +122,10 @@ def instance_switch_to(session: dict, sid: str, target: str) -> bool:
 
 def instances_write(items: list) -> bool:
     """写回 .instances.php（var_export 格式，PHP include 与 Python 解析互见）。"""
-    from phpfile import atomic_write_text, dump_php_return
+    from phpfile import atomic_write_text, dump_php_return, invalidate_php_cache
     try:
         atomic_write_text(INSTANCES_FILE, dump_php_return(items))
-        return True
     except OSError:
         return False
+    invalidate_php_cache(str(INSTANCES_FILE))
+    return True

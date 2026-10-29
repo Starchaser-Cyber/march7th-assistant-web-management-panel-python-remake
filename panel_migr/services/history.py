@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
+import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -11,6 +13,17 @@ from pathlib import Path
 from config import DATA_DIR, HISTORY_IDLE_SECONDS, HISTORY_KEEP
 from services.logs import latest_log_path
 from services.monitor import container_is_running
+
+# v1.24.4（P1-18）：history_<container>.json 的「读全量 → 改 → 整份覆盖写」
+# 必须互斥。history_sync（alert_tick / 页面）与 history_add（任务启动）并发时，
+# sync 用旧快照覆盖会让刚 add 的 running 记录凭空消失。
+# RLock：history_sync 内部 _finish → outcome 提取可能间接回调本模块。
+_HISTORY_LOCK = threading.RLock()
+
+
+def _tmp_name(p: Path) -> Path:
+    """临时文件名带 pid + 随机后缀，防并发写互踩（v1.24.4）。"""
+    return p.with_name(f"{p.name}.{os.getpid()}.{random.getrandbits(32):08x}.tmp")
 
 
 def history_data_file(inst: dict) -> Path:
@@ -33,9 +46,16 @@ def history_read(inst: dict) -> dict:
 def history_write(inst: dict, d: dict) -> bool:
     f = history_data_file(inst)
     try:
-        tmp = f.with_name(f.name + ".tmp")
-        tmp.write_text(json.dumps(d, ensure_ascii=False), "utf-8")
-        os.replace(tmp, f)
+        tmp = _tmp_name(f)
+        try:
+            tmp.write_text(json.dumps(d, ensure_ascii=False), "utf-8")
+            os.replace(tmp, f)
+        except OSError:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            raise
         return True
     except OSError:
         return False
@@ -46,11 +66,33 @@ def history_sync(inst: dict) -> dict:
 
     M4：判定结束时补记推断退出码（done→0，aborted→-1；PHP 读不到该字段时
     忽略、回写原样保留），并向事件总线发布 history 事件。
+
+    v1.24.4（P1-18）：整段「读全量 → 判定 → 整份覆盖写」持 `_HISTORY_LOCK`，
+    否则并发 history_add 的新记录会被本函数的旧快照覆盖消失。
+
+    已知限制（v1.24.4 记录，未修）：结束判定只看「最新日志文件」的 mtime，
+    所有 running 记录共享这一个静默判据。多个任务串行跑时，先结束的那个
+    仍会被后一个任务的日志写入持续「续命」，直到整串任务都静默 90 秒才一起
+    判完（结果是结束时间偏晚，不会误判/丢失）。精确修复需要按 task_key 记录
+    各自日志文件的 mtime 快照，改动面涉及 history_add 的调用方，风险大于收益，
+    留待后续版本。
     """
+    with _HISTORY_LOCK:
+        return _history_sync_locked(inst)
+
+
+def _history_sync_locked(inst: dict) -> dict:
     d = history_read(inst)
     now = int(time.time())
     log_path = latest_log_path(inst)
-    mtime = int(os.path.getmtime(log_path)) if (log_path and os.path.isfile(log_path)) else 0
+    # v1.24.4（P1-21 同源）：latest_log_path 与 getmtime 之间日志可能被轮转/清理，
+    # 原先直接 getmtime 抛 FileNotFoundError 会让 alert_tick 整轮异常。
+    mtime = 0
+    if log_path:
+        try:
+            mtime = int(os.stat(log_path).st_mtime)
+        except OSError:
+            mtime = 0
     changed = False
     container_running = None
     finished: list[dict] = []
@@ -244,6 +286,11 @@ def history_week_stats(items: list) -> list:
 
 def history_add(inst: dict, task_key: str, task_label: str) -> bool:
     """等价 PHP history_add()：插一条 running 记录，超 HISTORY_KEEP 只留最近。"""
+    with _HISTORY_LOCK:
+        return _history_add_locked(inst, task_key, task_label)
+
+
+def _history_add_locked(inst: dict, task_key: str, task_label: str) -> bool:
     from services.instances import instance_container
 
     d = history_read(inst)

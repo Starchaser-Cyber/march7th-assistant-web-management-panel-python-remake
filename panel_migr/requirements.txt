@@ -10,3 +10,7 @@ httpx>=0.27
 bcrypt>=4.1
 python-multipart>=0.0.18
 jinja2>=3.1.6
+# v1.24.4（P1-25）：main.py 的 WS 转发与 routers/preview.py 的预览流都直接 import
+# websockets；它只是 uvicorn[standard] 的传递依赖，未被声明 → 换成精简安装（
+# uvicorn 不带 standard extra）时 import 失败，WS/预览整体不可用。
+websockets>=12

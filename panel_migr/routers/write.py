@@ -9,8 +9,10 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 import re
+import secrets
 import time
 from hmac import compare_digest as _hash_equals
 from pathlib import Path
@@ -129,11 +131,159 @@ def _client_ip(request) -> str:
 
 
 def csrf_check(form, session: dict) -> bool:
-    """等价 PHP csrf_check()：POST csrf 字段与 session token 常量时间比对。"""
-    token = form.get("csrf")
-    if token is None:
+    """等价 PHP csrf_check()：POST csrf 字段与 session token 常量时间比对。
+
+    v1.24.4 修复（P1-9 / 审计 B-01）：旧实现只判 `token is None`，空串会走进
+    `compare_digest("", "")` 并返回 True。而 csrf token 只在**渲染页面**时惰性
+    生成，`h_login` 成功路径只写 auth 键 → 登录后到首次 GET 之间的窗口里
+    session 无 csrf 键，此时 `action=setup_pass&csrf=`（不需要旧密码）即可改密
+    接管面板。现在三条件缺一不可：
+      1) session 里存在**非空** csrf 值；
+      2) 提交的 csrf **非空**；
+      3) 两者常量时间相等。
+    """
+    stored = str(session.get(cfg.CSRF_KEY) or "")
+    token = str(form.get("csrf") or "")
+    if not stored or not token:
         return False
-    return _hash_equals(str(session.get(cfg.CSRF_KEY) or ""), str(token))
+    return _hash_equals(stored, token)
+
+
+def _issue_csrf(session: dict, sid: str) -> str:
+    """登录/设密成功时立即生成并落盘 csrf token（P1-9 的另一半）。
+
+    页面渲染期的惰性生成（services/pagectx.py csrf_field）保留不动：这里只是把
+    「session 里没有 csrf 键」的窗口从登录后一直存在的长度缩短到 0，使空 token
+    绕过连理论窗口都不存在。写盘失败不影响登录本身（下次渲染会再补）。
+    """
+    tok = str(session.get(cfg.CSRF_KEY) or "")
+    if not tok:
+        tok = secrets.token_hex(16)
+        session[cfg.CSRF_KEY] = tok
+        try:
+            session_set(sid, cfg.CSRF_KEY, tok)
+        except OSError:
+            pass
+    return tok
+
+
+# ===== 上传/目录参数校验（v1.24.4 修 P1-23 / P1-24）=====
+
+# inst_dir 黑名单：这些目录做「实例项目目录」会直接把面板的配置写入/备份/删除
+# 操作引到系统关键路径上（config.yaml 会被写到 /etc/config.yaml 之类）。
+_SYS_DIRS = frozenset({
+    "/", "/etc", "/usr", "/usr/local", "/usr/bin", "/usr/sbin", "/usr/lib",
+    "/bin", "/sbin", "/lib", "/lib64", "/boot", "/dev", "/proc", "/sys",
+    "/root", "/home", "/var", "/tmp", "/run", "/opt", "/srv", "/mnt", "/media",
+})
+
+
+def validate_inst_dir(raw: str) -> str:
+    """校验实例项目目录，返回错误文案（空串=通过）。P1-24（审计 D-02）。
+
+    旧实现只 `.strip().rstrip("/")` 后直接拼给 instances.py →
+    `instance_config()` 变成 `inst_dir + "/config.yaml"`，于是
+      - `inst_dir=/etc`      → 配置写入/备份/回滚全部落在 /etc；
+      - `inst_dir=../..`     → 相对路径按面板进程 cwd 解析，可逃出面板目录；
+      - `inst_dir=/`         → 拼出 `//config.yaml`。
+    面板以 root 运行，等价于任意文件写入/删除。
+
+    规则：必须是绝对路径、不含 `..` 段、规范化后不得命中系统关键目录黑名单。
+    """
+    d = str(raw or "").strip()
+    if not d:
+        return "项目目录不能为空"
+    if not d.startswith("/"):
+        return "项目目录必须是绝对路径"
+    # 逐段检查 `..`（规范化会吃掉它，所以必须先查原始段）
+    for seg in d.replace("\\", "/").split("/"):
+        if seg == "..":
+            return "项目目录不能包含 .. 路径段"
+    norm = os.path.normpath(d)
+    if not norm.startswith("/"):
+        return "项目目录必须是绝对路径"
+    if norm in _SYS_DIRS:
+        return f"项目目录不能是系统目录：{norm}"
+    return ""
+
+
+def validate_yaml_text(text: str) -> str:
+    """轻量 YAML 结构校验，返回错误文案（空串=通过）。P1-23（审计 D-01）。
+
+    旧实现只查「扩展名 + ≤2MB + 含 `:`」就整文件覆盖 config.yaml → 上传
+    `server:\n  port: [8080\n  bad: {{{` 这类明显损坏的 YAML 也会成功，
+    容器下次启动直接读不到配置（面板失联，且备份文件名带随机后缀不好找）。
+
+    不引入新依赖（pyyaml 不在 requirements 里），只做「结构自洽」检查：
+      1) 逐行校验：tab 缩进、行尾未闭合引号、括号/花括号/方括号配平；
+      2) 至少一行 `key:` 形式的映射键（纯文本/二进制被挡掉）；
+      3) 整体括号深度最终归零。
+    这是保守校验（宁可放过合法怪写法，也不误杀），但足以挡住截断/乱码/注入式
+    的损坏内容 —— 审计里实测可写入的那几种都会被 1) 拦下。
+    """
+    if not text.strip():
+        return "文件内容为空"
+    depth = 0
+    stack: list[str] = []
+    pairs = {")": "(", "]": "[", "}": "{"}
+    key_lines = 0
+    in_block: str | None = None      # 处于 `|` / `>` 块标量内时不做括号/引号检查
+    block_indent = 0
+    for lineno, raw in enumerate(text.splitlines(), 1):
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" \t"))
+        if in_block is not None:
+            if indent > block_indent:
+                continue             # 块标量正文，原样放行
+            in_block = None
+        if "\t" in line[:indent + 1] and line[:indent].count(" ") != indent:
+            return f"第 {lineno} 行：缩进不能使用 Tab，请改用空格"
+        if stripped.startswith("\t"):
+            return f"第 {lineno} 行：缩进不能使用 Tab，请改用空格"
+        # 块标量起始（`key: |` / `key: >` / `- |`）
+        m_block = re.match(r"^(?:-\s+)?[^#]*:\s*[|>][+-]?\s*(?:#.*)?$", stripped)
+        if m_block:
+            in_block, block_indent = "|", indent
+            continue
+        if re.match(r"^[A-Za-z_][\w.-]*\s*:", stripped) or re.match(r"^-\s", stripped):
+            if re.match(r"^[A-Za-z_][\w.-]*\s*:", stripped):
+                key_lines += 1
+        # 括号配平 + 引号闭合（跳过注释部分）
+        i, quote = 0, None
+        while i < len(stripped):
+            ch = stripped[i]
+            if quote:
+                if quote == '"' and ch == "\\":
+                    i += 2
+                    continue
+                if ch == quote:
+                    quote = None
+            elif ch in "\"'":
+                quote = ch
+            elif ch == "#" and (i == 0 or stripped[i - 1] in " \t"):
+                break                # 行内注释，其后不参与配平
+            elif ch in "([{":
+                stack.append(ch)
+                depth += 1
+            elif ch in ")]}":
+                if not stack or stack[-1] != pairs[ch]:
+                    return f"第 {lineno} 行：括号不匹配（多余的 {ch}）"
+                stack.pop()
+                depth -= 1
+            i += 1
+        if quote:
+            return f"第 {lineno} 行：引号未闭合"
+    if in_block is not None:
+        pass                          # 块标量到文件尾是合法的
+    if stack:
+        return "文件内容异常：括号/引号未闭合，疑似配置被截断"
+    if key_lines == 0:
+        return "文件内容异常，未识别到有效的 YAML 映射键"
+    return ""
+
 
 
 # ===== 认证 4（W1）=====
@@ -153,6 +303,7 @@ def h_setup_pass(request, form, session, sid):
         if not session_set(sid, cfg.SKEY, True):
             session.pop(cfg.SKEY, None)
             return F(err="保存登录状态失败，请重试")
+        _issue_csrf(session, sid)            # P1-9：登录即发 csrf，不留空窗
         if old_sid and old_sid != sid:
             session_remove(old_sid, cfg.SKEY)  # 旧会话注销（尽力而为）
         return RD(set_sid=sid)
@@ -160,26 +311,42 @@ def h_setup_pass(request, form, session, sid):
 
 
 def h_login(request, form, session, sid):
+    """登录：单 IP 锁定 + 全局失败计数兜底（v1.24.4 修 P1-10 自伤式 DoS）。
+
+    旧实现在**校验密码之前**就用 global_locked() 硬拒绝，而成功登录是清零全局桶
+    的唯一途径 → 一旦被人打满 20 次/分钟，锁定期内成功路径永远走不到，所有人都
+    永久无法登录。现在改为「先验密码、成功即放行并清零」：
+      - 单 IP 锁定（5 次/5 分钟）仍在密码校验前生效（这是有意义的防爆破）；
+      - 全局桶只影响**失败**路径的文案与记录，不再拒绝正确的密码；
+      - 任一次成功登录 → lg.ok() 整体清零全局桶。
+    这样攻击者付出 20 次/分钟的成本，收益从「锁死所有人」降为「无收益」。
+    """
     p = str(form.get("pass") or "")
     ip = _client_ip(request)
-    gl = lg.global_locked()
-    if gl > 0:                                   # 全局限速兜底（M7A-03）
-        return F(err=f"登录尝试过多，请 {gl} 秒后再试")
     if not lg.check(ip):
         return F(err=f"尝试过于频繁，请 {lg.remaining(ip)} 秒后再试")
     if passwd.check_pass(p):
-        lg.ok(ip)
+        lg.ok(ip)                            # 清单 IP 桶 + 整体清全局桶
         old_sid = sid
         sid = new_sid()                      # 总是轮换（M5：会话固定防御）
         session[cfg.SKEY] = True
         if not session_set(sid, cfg.SKEY, True):
             session.pop(cfg.SKEY, None)
             return F(err="保存登录状态失败，请重试")
+        _issue_csrf(session, sid)            # P1-9：登录即发 csrf，不留空窗
         if old_sid and old_sid != sid:
             session_remove(old_sid, cfg.SKEY)  # 旧会话注销（尽力而为）
         return RD(set_sid=sid)
     lg.fail(ip)
-    lg.global_fail()
+    lg.global_fail(ip)
+    gl = lg.global_locked()
+    if gl > 0:
+        # 全局失败风暴中：失败者看到限速文案，合法管理员不受影响。
+        # 只有「不同来源数 ≥ GLOBAL_SOURCES_MIN」才判定为分布式爆破并明说，
+        # 单人反复失败（来源数≈1）不升级文案，避免误导运维。
+        if lg.global_sources() >= lg.GLOBAL_SOURCES_MIN:
+            return F(err=f"登录尝试过多（疑似分布式爆破），请 {gl} 秒后再试")
+        return F(err=f"登录尝试过多，请 {gl} 秒后再试")
     return F(err="密码错误")
 
 
@@ -205,14 +372,22 @@ def h_restore_config(request, form, session, sid):
     text = content.decode("utf-8", "replace") if isinstance(content, bytes) else str(content)
     if len(text.strip()) < 10 or ":" not in text:
         return F(err="文件内容异常，未识别到有效 YAML 配置")
+    # v1.24.4（P1-23）：结构校验。旧实现只查「扩展名 + 大小 + 含冒号」，
+    # 截断/乱码的 YAML 也能整文件覆盖 config.yaml → 容器下次启动读不到配置。
+    verr = validate_yaml_text(text)
+    if verr:
+        return F(err=verr)
     inst = instance_current(session)
     bak = config_backup(inst)
+    if not bak:
+        # 旧实现备份失败也照样覆盖（备份名 "无"）→ 写坏就没有回滚点。
+        return F(err="原配置备份失败，已取消写入（避免无法回滚）")
     try:
         Path(instance_config(inst)).write_text(text, "utf-8")
     except OSError:
         return F(err=f"写入失败，请检查文件权限：chmod 666 {instance_config(inst)}")
-    bakname = Path(bak).name if bak else "无"
-    return F(msg=f"配置已恢复（{h(fname)}），原配置备份：{bakname}。需重启容器生效。")
+    bakname = Path(bak).name
+    return F(msg=f"配置已恢复（{fname}），原配置备份：{bakname}。需重启容器生效。")
 
 
 # ===== 多实例 3（W5）=====
@@ -222,7 +397,7 @@ def h_instance_switch(request, form, session, sid):
     target = str(form.get("instance_id") or "").strip()
     if target and instance_switch_to(session, sid, target):
         inst = instance_current(session)
-        return F(msg=f"已切换到实例：{h(instance_name(inst))}（{h(instance_container(inst))}）")
+        return F(msg=f"已切换到实例：{instance_name(inst)}（{instance_container(inst)}）")
     return F(err="切换失败：实例不存在")
 
 
@@ -236,6 +411,11 @@ def h_instance_save(request, form, session, sid):
         return F(err="名称、容器名、项目目录均不能为空")
     if not re.match(r"^[A-Za-z0-9_-]+$", container):
         return F(err="容器名只能包含字母、数字、下划线、短横线")
+    # v1.24.4（P1-24）：inst_dir 此前完全不校验，直接拼成 `<dir>/config.yaml`
+    # 交给写盘/备份/回滚 → 可设 /etc、/ 或 ../.. 实现任意路径写入（面板以 root 跑）。
+    derr = validate_inst_dir(_dir)
+    if derr:
+        return F(err=derr)
 
     lst = instances_load()
     is_new = True
@@ -272,9 +452,9 @@ def h_instance_save(request, form, session, sid):
     if instances_write(lst):
         if is_new:
             instance_switch_to(session, sid, container)
-        msg = f"实例「{h(name)}」已添加并切换" if is_new else f"实例「{h(name)}」已更新"
+        msg = f"实例「{name}」已添加并切换" if is_new else f"实例「{name}」已更新"
         return F(msg=msg)
-    return F(err=f"写入 {h(Path(cfg.INSTANCES_FILE).name)} 失败，请检查面板目录权限")
+    return F(err=f"写入 {Path(cfg.INSTANCES_FILE).name} 失败，请检查面板目录权限")
 
 
 def h_instance_delete(request, form, session, sid):
@@ -285,7 +465,7 @@ def h_instance_delete(request, form, session, sid):
     if not target:
         return F(err="实例不存在")
     if confirm != target["name"]:
-        return F(err=f"确认失败：请输入实例名称「{h(target['name'])}」以删除")
+        return F(err=f"确认失败：请输入实例名称「{target['name']}」以删除")
     if len(lst) <= 1:
         return F(err="至少保留一个实例，无法删除")
     new_list = [it for it in lst if it["id"] != _id]
@@ -297,7 +477,7 @@ def h_instance_delete(request, form, session, sid):
         nc = instance_current({})
         session["m7a_instance"] = nc["id"]
         session_set(sid, "m7a_instance", nc["id"])
-    return F(msg=f"实例「{h(target['name'])}」已删除")
+    return F(msg=f"实例「{target['name']}」已删除")
 
 
 # ===== 任务 8（W3）=====
@@ -533,6 +713,12 @@ def _form_updates(form) -> dict:
             v = str(form.get(post_key) or "").strip()
             if v != "":
                 updates[key] = '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
+        elif f.get("type") == "textarea":
+            # v1.24.4 修复（交接自 fix-handlers）：textarea（webhook headers/body、
+            # 自定义 JSON/图片）是用户手工编排的内容，首尾空白与末尾换行有语义，
+            # 不能 strip。仅把 CRLF 归一化为 LF，其余原样保留。
+            v = str(form.get(post_key) or "").replace("\r\n", "\n").replace("\r", "\n")
+            updates[key] = yaml_format_val(v, f.get("type"))
         else:
             v = str(form.get(post_key) or "").strip()
             updates[key] = yaml_format_val(v, f.get("type"))

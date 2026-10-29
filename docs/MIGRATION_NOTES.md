@@ -62,7 +62,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `M7A_PANEL_DIR` | 上级目录 | 面板根目录（data/、实例与配置文件所在处） |
 | `M7A_PHP_UPSTREAM` | `http://127.0.0.1:9999` | 原站点地址（网关转发目标） |
 | `M7A_LISTEN_HOST` / `M7A_LISTEN_PORT` | `127.0.0.1` / `8787` | 服务监听 |
-| `M7A_SESSION_DIR` | `/tmp` | PHP session 目录（登录态互通） |
+| `M7A_SESSION_DIR` | `BASE_DIR/sessions` | 会话目录；仅在与旧版 PHP 面板互通时指向其 `session.save_path` |
+| `M7A_SESSION_MODE` | `660` | 会话文件权限（八进制）；不建议放宽到 `666` |
 | `M7A_TZ` | 系统时区 | 与 PHP 时区对齐 |
 
 ## 迁移进度

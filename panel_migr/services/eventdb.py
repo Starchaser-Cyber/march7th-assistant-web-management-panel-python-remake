@@ -15,6 +15,7 @@ import threading
 import time
 
 import config
+from services.logs import elapsed_ok    # v1.24.4：时钟回拨安全的节流判定
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS events (
@@ -48,6 +49,9 @@ _conns: list[sqlite3.Connection] = []
 
 _SAMPLE_DB_GAP = 15               # 采样点落库节流秒数（WS 推送不受此限制）
 _last_sample_ts: dict[str, int] = {}
+
+VACUUM_EVERY_N_TRIMS = 100        # v1.24.4：每 N 次 trim 做一次 VACUUM（约每月）
+_trim_count = 0                   # 进程内 trim 计数（重启归零，最多推迟一个月）
 
 
 def db_path():
@@ -244,7 +248,8 @@ def insert_sample(p: dict, running: bool, inst: str = "") -> bool:
     ts = int(p.get("t") or time.time())
     key = str(inst or "")
     last = _last_sample_ts.get(key, 0)
-    if ts - last < _SAMPLE_DB_GAP:
+    # v1.24.4：时钟回拨时 ts - last 为负 → 原写法恒真 → 采样永久不落库。
+    if not elapsed_ok(ts, last, _SAMPLE_DB_GAP):
         return False
     _last_sample_ts[key] = ts
     try:
@@ -281,7 +286,14 @@ def insert_minute(t: int, cpu: float, mem: float, disk: float, inst: str = "") -
 
 
 def trim(now: int | None = None) -> bool:
-    """定期裁剪：events 留 5 万条、采样 30 天、分钟 90 天。"""
+    """定期裁剪：events 留 5 万条、采样 30 天、分钟 90 天。
+
+    v1.24.4（P2-2）：DELETE 只释放页、不缩文件，DB 与 -wal 会无界增长。
+    裁剪后先 `wal_checkpoint(TRUNCATE)` 截断 WAL；VACUUM 代价高（需重写整库），
+    故按 `VACUUM_EVERY_N_TRIMS` 次裁剪才做一次，且必须不在事务中执行
+    （VACUUM 不能被 BEGIN 包住，因此放在 commit 之后、锁内单独执行）。
+    """
+    global _trim_count
     now = int(now if now is not None else time.time())
     try:
         with _lock:
@@ -292,6 +304,18 @@ def trim(now: int | None = None) -> bool:
             c.execute("DELETE FROM monitor_samples WHERE ts < ?", (now - 30 * 86400,))
             c.execute("DELETE FROM monitor_minutes WHERE t < ?", (now - 90 * 86400,))
             c.commit()
+            # WAL 只做 checkpoint 不会缩小主库，但能把 -wal 截断回 0 字节
+            try:
+                c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except sqlite3.Error:
+                pass
+            _trim_count += 1
+            if _trim_count % VACUUM_EVERY_N_TRIMS == 0:
+                # 上一行已 commit，此刻不在事务里 → VACUUM 合法
+                try:
+                    c.execute("VACUUM")
+                except sqlite3.Error:
+                    pass                # 被其他连接占用等 → 下个周期再试
         return True
     except (sqlite3.Error, OSError, ValueError):
         return False

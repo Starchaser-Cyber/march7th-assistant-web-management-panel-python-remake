@@ -9,7 +9,9 @@ from __future__ import annotations
 import os
 import re
 import secrets
+import stat
 import string
+import threading
 from pathlib import Path
 
 from config import SESSION_FILE_MODE, SESSION_SAVE_PATH, SKEY
@@ -132,43 +134,110 @@ def _iter_entries(text: str):
         return
 
 
+_LOCK = threading.RLock()   # 进程内串行化「读-改-写」全程（P1-11）
+
+
 def _session_path(sid: str) -> Path | None:
     if not sid or not _SID_RE.fullmatch(sid):
         return None
     return Path(SESSION_SAVE_PATH) / f"sess_{sid}"
 
 
-def _write_session_file(path: Path, text: str) -> None:
-    """写回 session 文件（M2-R：绕开内核 fs.protected_regular）。
-
-    对「非目录属主」的已存在普通文件用 O_CREAT 方式（open(path,"w") /
-    Path.write_text）打开，会被内核以 EACCES 拒绝，即使 uid=0 且具备全部
-    capabilities（服务器实测：登录态写不进 → 登录死循环）。
-    故：
-    - 文件已存在 → O_WRONLY|O_TRUNC（无 O_CREAT）打开，保留原 inode/属主/权限；
-    - 文件不存在 → O_CREAT|O_EXCL 新建（新文件属主 = 目录属主，保护不触发），
-      并 chmod 到 SESSION_FILE_MODE 覆盖 umask。
-
-    v1.24.3 安全加固（M7A-02）：权限默认 0660（原 0666）。session 里承载登录态，
-    0666 意味着同机任何账号都能往有效 sid 追加 `m7a_panel_auth|b:1;` 直接获得
-    管理员权限；而面板以 root 运行，等价于本地提权。需要与 PHP-fpm(www) 共享时
-    用同组 + 0660，不要回退到 0666（确需则显式 M7A_SESSION_MODE=666）。
-    """
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    data = text.encode("utf-8")
-    created = False
+def _is_symlink(path: Path) -> bool:
+    """目标是否已是符号链接（P1-12：绝不跟随链接写/改权限）。"""
     try:
-        fd = os.open(path, os.O_WRONLY | os.O_TRUNC)
-    except FileNotFoundError:
+        return stat.S_ISLNK(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
+def _read_all(fd: int) -> str:
+    os.lseek(fd, 0, os.SEEK_SET)
+    chunks: list[bytes] = []
+    while True:
+        b = os.read(fd, 65536)
+        if not b:
+            break
+        chunks.append(b)
+    return b"".join(chunks).decode("utf-8", "replace")
+
+
+def _update_session_file(path: Path, mutate, *, create: bool = True) -> bool:
+    """在**排他锁内**完成 session 文件的读-改-写，返回是否成功。
+
+    v1.24.4 修复（P1-11 / 审计 B-03）：旧实现是「read_text 整个文件 → 改 → 
+    O_TRUNC 写回」，全程无锁。并发下两个请求各读一份旧文本、各自写回，后写者
+    把先写者的改动整体覆盖 —— 实测「登出后 auth 键复活」（登出请求删掉 auth，
+    并发的另一请求用旧快照把它写回来 → 已登出的会话重新变成管理员）。
+
+    现在：
+      1) 模块级 threading.RLock 把「读-改-写」整段串起来（同进程内并发）；
+      2) 对同一 fd 用 os.lockf(LOCK_EX) 与 PHP files handler 的 flock 互斥
+         （跨进程，Python 与 PHP 面板共享同一批 session 文件）；
+      3) 读取与写入都在锁内、都走同一个 fd，不再有「读一份旧快照」的窗口。
+
+    为什么不改成「写临时文件 + os.replace」：M2-R 修复要求已存在的 session 文件
+    必须**保留原 inode/属主/权限**（/tmp 下 PHP 建的 www 属主文件，用 O_CREAT
+    方式打开会被内核 fs.protected_regular=2 直接 EACCES → 登录死循环）。
+    os.replace 会换掉 inode 与属主，等于回退 M2-R 的根因修复；故仍用「无 O_CREAT
+    打开 + 原地截断写」，原子性由锁保证。
+
+    P1-12（审计 B-04）：所有打开都带 os.O_NOFOLLOW。旧实现写会话文件时未带该
+    标志，若攻击者能在 session 目录里放一个指向 /etc/... 的符号链接（目录可写
+    或 PHP 侧可控），写入会穿透链接以 root 身份改写任意文件 → 本地提权。现在
+    链接目标 open 直接 ELOOP 失败，且 chmod 前用 lstat 再校验一次不是链接。
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    except OSError:
+        return False
+    flags = os.O_RDWR | os.O_NOFOLLOW
+    with _LOCK:
+        if _is_symlink(path):        # 快速失败：不跟随链接
+            return False
+        created = False
         try:
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, SESSION_FILE_MODE)
-            created = True
-        except FileExistsError:          # 并发创建竞态 → 按已存在打开
-            fd = os.open(path, os.O_WRONLY | os.O_TRUNC)
-    with os.fdopen(fd, "wb") as f:
-        if created:
-            os.chmod(path, SESSION_FILE_MODE)
-        f.write(data)
+            try:
+                fd = os.open(path, flags)
+            except FileNotFoundError:
+                if not create:
+                    return True      # 无文件可改（session_remove 的 noop 语义）
+                try:
+                    fd = os.open(path, flags | os.O_CREAT | os.O_EXCL,
+                                 SESSION_FILE_MODE)
+                    created = True
+                except FileExistsError:      # 并发创建竞态 → 按已存在打开
+                    fd = os.open(path, flags)
+            except OSError:                  # ELOOP（链接）/ EACCES / EACCES-protected
+                return False
+        except OSError:
+            return False
+        try:
+            try:
+                import fcntl
+                fcntl.lockf(fd, fcntl.LOCK_EX, 0)   # 与 PHP flock 互斥（跨进程）
+            except (ImportError, OSError, AttributeError):
+                pass                          # 不支持锁的文件系统 → 仍有 RLock
+            text = "" if created else _read_all(fd)
+            new_text = mutate(text)
+            if new_text is None:
+                return True
+            data = new_text.encode("utf-8")
+            os.lseek(fd, 0, os.SEEK_SET)
+            os.ftruncate(fd, 0)
+            os.write(fd, data)
+            if created:
+                st = os.lstat(path)
+                if stat.S_ISREG(st.st_mode):   # 只在确认是普通文件后才 chmod
+                    os.chmod(path, SESSION_FILE_MODE)
+            return True
+        except OSError:
+            return False
+        finally:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
 
 def new_sid() -> str:
@@ -177,28 +246,36 @@ def new_sid() -> str:
     return "".join(secrets.choice(alphabet) for _ in range(32))
 
 
+def _mutate_set(text: str, key: str, entry: str) -> str:
+    for k, s, e in _iter_entries(text):
+        if k == key:
+            # s 指向值起点，键起点 = s - len(key) - 1（含尾部 |）
+            return text[:s - len(key) - 1] + entry + text[e:]
+    # PHP 格式：条目直接相接（key|ser; 无额外分隔）
+    return text + entry
+
+
+def _mutate_remove(text: str, key: str):
+    changed = False
+    for k, s, e in list(_iter_entries(text)):
+        if k == key:
+            text = text[:s - len(key) - 1] + text[e:]
+            changed = True
+            break
+    return text if changed else None      # None = 无需写盘
+
+
 def session_set(sid: str, key: str, value) -> bool:
-    """写/替换一个 session 键（外科式改写原文，不动其它键）。返回是否成功。"""
+    """写/替换一个 session 键（外科式改写原文，不动其它键）。返回是否成功。
+
+    v1.24.4：读-改-写在 _update_session_file 的排他锁内一次完成（P1-11），
+    不再出现「读旧快照 → 覆盖别人改动」的窗口。
+    """
     path = _session_path(sid)
     if path is None:
         return False
     entry = f"{key}|{php_serialize(value)}"
-    try:
-        try:
-            text = path.read_text("utf-8", errors="replace")
-        except OSError:
-            text = ""
-        for k, s, e in _iter_entries(text):
-            if k == key:
-                # s 指向值起点，键起点 = s - len(key) - 1（含尾部 |）
-                text = text[:s - len(key) - 1] + entry + text[e:]
-                break
-        else:
-            text += entry   # PHP 格式：条目直接相接（key|ser; 无额外分隔）
-        _write_session_file(path, text)
-        return True
-    except OSError:
-        return False
+    return _update_session_file(path, lambda text: _mutate_set(text, key, entry))
 
 
 def session_remove(sid: str, key: str) -> bool:
@@ -206,23 +283,8 @@ def session_remove(sid: str, key: str) -> bool:
     path = _session_path(sid)
     if path is None:
         return False
-    try:
-        text = path.read_text("utf-8", errors="replace")
-    except OSError:
-        return True
-    changed = False
-    for k, s, e in list(_iter_entries(text)):
-        if k == key:
-            text = text[:s - len(key) - 1] + text[e:]
-            changed = True
-            break
-    if not changed:
-        return True
-    try:
-        _write_session_file(path, text)
-        return True
-    except OSError:
-        return False
+    return _update_session_file(path, lambda text: _mutate_remove(text, key),
+                                create=False)
 
 
 def session_id(request) -> str:
