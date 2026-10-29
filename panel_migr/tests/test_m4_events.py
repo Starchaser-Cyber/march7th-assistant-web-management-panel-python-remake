@@ -301,9 +301,10 @@ def test_alert_history_endpoint():
     assert d["ok"] and len(d["items"]) == 1
     assert d["items"][0]["kind"] == "down"
     assert d["items"][0]["pushed"] is True
-    # 未登录 → Python 渲染登录页（M5-B 不再依赖 PHP）
+    # v1.24.2：未登录 ajax → 401 JSON（前端 fetch 拦截自动跳登录页）
     r2 = client.get("/?ajax=alert_history")
-    assert "auth-card" in r2.text
+    assert r2.status_code == 401
+    assert r2.json() == {"auth": False}
 
 
 # ---------- 日志流式 ----------

@@ -118,12 +118,12 @@ def test_monitor_json():
 
 # ---------- 未登录 / 未迁移 → 转发 ----------
 
-def test_unauth_renders_login_page():
-    """M5-B：未登录请求与 PHP 一致 → Python 渲染登录页（不再转发）。"""
+def test_unauth_ajax_returns_401():
+    """v1.24.2：未登录的 ajax → 401 JSON（前端 fetch 拦截自动跳登录页），不回源。"""
     RECEIVED.clear()
     r = client.get("/?ajax=status", cookies=UNAUTH)
-    assert r.status_code == 200
-    assert "auth-card" in r.text
+    assert r.status_code == 401
+    assert r.json() == {"auth": False}
     assert not RECEIVED
 
 

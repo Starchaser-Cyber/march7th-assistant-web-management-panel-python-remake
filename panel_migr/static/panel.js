@@ -1,3 +1,26 @@
+/* v1.24.2 热修 rev2：登录态失效时 ajax 收到 401 → 自动刷新一次跳回登录页；
+   60 秒内只刷一次，防止登录页后台轮询也收到 401 造成无限刷新循环 */
+(function () {
+  var _fetch = window.fetch;
+  if (_fetch) {
+    window.fetch = function () {
+      return _fetch.apply(this, arguments).then(function (r) {
+        if (r && r.status === 401) {
+          try {
+            var k = '_m7a_401_reload_at';
+            var now = Date.now();
+            var last = parseInt(sessionStorage.getItem(k) || '0', 10);
+            if (!last || now - last > 60000) {
+              sessionStorage.setItem(k, String(now));
+              setTimeout(function () { location.reload(); }, 50);
+            }
+          } catch (e) { /* storage 不可用时不自动刷新 */ }
+        }
+        return r;
+      });
+    };
+  }
+})();
 /* ===== 主题（默认星铁粉蓝 三月七）===== */
 var THEMES = [
   { name: 'march7', icon: '🎀', label: '星铁粉蓝' },

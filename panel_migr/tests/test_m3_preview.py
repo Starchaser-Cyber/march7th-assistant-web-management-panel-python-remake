@@ -197,9 +197,10 @@ def test_preview_token_ajax_endpoint():
     assert r.status_code == 200
     d = r.json()
     assert d["ok"] and d["token"] == pv.day_token("deadbeef" * 4)
-    # 未登录 → Python 渲染登录页（M5-B 不再依赖 PHP）
+    # v1.24.2：未登录 ajax → 401 JSON（前端 fetch 拦截自动跳登录页）
     r2 = client.get("/?ajax=preview_token")
-    assert "auth-card" in r2.text
+    assert r2.status_code == 401
+    assert r2.json() == {"auth": False}
 
 
 # ---------- 动态寻址与自愈 ----------

@@ -69,6 +69,9 @@ async def dispatch_get(request: Request) -> Response:
     qp = request.query_params
     authed = is_auth(request.state.session)
 
+    # v1.24.2 热修：未登录的 ajax 返回 401（旧行为回退整页 HTML，前端 r.json() 解析失败导致数据区假死）
+    if qp.get("ajax") and not authed:
+        return Response(content='{"auth": false}', status_code=401, media_type="application/json")
     # 1) 登录态 + ajax（对齐 PHP `isset($_GET['ajax']) && is_auth()`）
     if authed and qp.get("ajax"):
         handler = GET_HANDLERS.get(qp["ajax"])

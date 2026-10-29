@@ -235,4 +235,5 @@ def test_preview_token_missing_secret(monkeypatch):
 
 def test_preview_token_requires_auth():
     r = client.get("/?ajax=preview_token", cookies={}, follow_redirects=False)
-    assert b"auth-card" in r.content   # M5-B：未登录 → Python 渲染登录页
+    assert r.status_code == 401        # v1.24.2：未登录 ajax → 401 JSON
+    assert r.json() == {"auth": False}

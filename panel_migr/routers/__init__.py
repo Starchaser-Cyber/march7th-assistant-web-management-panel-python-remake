@@ -1,9 +1,19 @@
-"""routers 包的包级导出。
+"""路由注册：只读 GET（M1）+ 写型 GET/下载/key 回调（M2）+ POST（M2）+ 预览（M3）+ 事件化（M4）。"""
+from routers.readonly import GET_HANDLERS as READONLY_GET_HANDLERS
+from routers.get_write import WRITE_GET_HANDLERS, SPECIAL_GETS
+from routers.preview import PREVIEW_GET_HANDLERS
+from routers.events import EVENTS_GET_HANDLERS
 
-main.py 顶层导入 `from routers import GET_HANDLERS, SPECIAL_GETS`
-需要此文件把子模块里的名字提升到包级；否则 Python 3 无法把 routers 识别为包。
-"""
-from __future__ import annotations
+# ajax 名 → 同步处理器（返回 Response 或 dict）
+GET_HANDLERS = {
+    **READONLY_GET_HANDLERS,
+    **WRITE_GET_HANDLERS,
+    **PREVIEW_GET_HANDLERS,
+    **EVENTS_GET_HANDLERS,
+}
 
-from routers.readonly import GET_HANDLERS  # noqa: F401
-from routers.get_write import SPECIAL_GETS  # noqa: F401
+__all__ = [
+    "GET_HANDLERS", "SPECIAL_GETS",
+    "READONLY_GET_HANDLERS", "WRITE_GET_HANDLERS", "PREVIEW_GET_HANDLERS",
+    "EVENTS_GET_HANDLERS",
+]

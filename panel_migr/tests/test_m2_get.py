@@ -123,9 +123,10 @@ def test_check_update_and_test_source(monkeypatch):
     assert get("ajax=test_update_source").json() == {"ok": True, "msg": "源可达"}
 
 
-def test_write_get_unauth_renders_login():
+def test_write_get_unauth_returns_401():
     r = get("ajax=doctor", cookies=new_session(authed=False))
-    assert "auth-card" in r.text              # M5-B：未登录 → Python 登录页
+    assert r.status_code == 401               # v1.24.2：未登录 ajax → 401 JSON
+    assert r.json() == {"auth": False}
 
 
 # ---------- W6：2 个下载 ----------

@@ -14,3 +14,12 @@ sessions/
 *.bak.*
 *.tmp
 panel_migr/tests/_tmp/
+
+# 打包产物与本地杂物不入库
+*.zip
+.panel_config.php
+_pv_probe.jpg
+make_zip.py
+assets_shoot.py
+pv_card_shoot.py
+panel_migr/_*.py
