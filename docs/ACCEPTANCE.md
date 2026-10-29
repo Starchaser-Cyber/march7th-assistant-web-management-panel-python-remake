@@ -50,7 +50,8 @@
 - [ ] `?ajax=log` 返回 JSON（files/lines）
 - [ ] `?ajax=monitor&iv=1` 返回 JSON（points 非空）
 - [ ] `?ajax=history` 返回 JSON（items 数组）
-- [ ] key 迁 header：`curl -s -H 'X-Panel-Key: <key>' 'http://127.0.0.1:8787/?monitor_sampler=1'` 正常；老 URL 带 `&key=` 照常
+- [ ] key 走 header：`curl -s -H 'X-M7A-Key: <key>' 'http://127.0.0.1:8787/?monitor_sampler=1'` 正常；URL 带 `&key=` 默认被拒（v1.24.3 起；需临时兼容设 `M7A_ALLOW_KEY_QUERY=1`）
+- [ ] 预览需登录：未登录 `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8787/m7a-preview/health` → `401`（v1.24.3 起）
 
 ### 6. 预览（M3）
 

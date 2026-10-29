@@ -9,6 +9,8 @@ code=0 表示连接失败，body='' 表示无内容。
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import io
 import json
 import os
@@ -45,7 +47,7 @@ def http_get(url: str, timeout: int = 8) -> dict:
     try:
         r = httpx.get(
             url, timeout=httpx.Timeout(timeout, connect=5), follow_redirects=True,
-            headers={"User-Agent": UA}, verify=False,
+            headers={"User-Agent": UA},
         )
         return {"code": r.status_code, "body": r.text}
     except Exception:
@@ -57,7 +59,7 @@ def http_bytes(url: str, timeout: int = 60) -> bytes | None:
     try:
         r = httpx.get(
             url, timeout=httpx.Timeout(timeout, connect=10), follow_redirects=True,
-            headers={"User-Agent": UA}, verify=False,
+            headers={"User-Agent": UA},
         )
         if r.status_code == 200 and r.content:
             return r.content
@@ -86,7 +88,7 @@ def _probe(url: str, timeout: int = 8) -> dict:
     try:
         r = httpx.get(
             url, headers={"User-Agent": UA, "Range": "bytes=0-0"},
-            timeout=httpx.Timeout(timeout, connect=5), follow_redirects=True, verify=False,
+            timeout=httpx.Timeout(timeout, connect=5), follow_redirects=True,
         )
         return {"code": r.status_code, "ok": r.status_code in (200, 206)}
     except Exception:
@@ -200,6 +202,33 @@ def _zip_urls(zip_url: str) -> list[tuple[str, str]]:
     return out
 
 
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _asset_digest(j: dict, asset_name: str) -> str:
+    """从 Release JSON 取资产 sha256 digest。
+
+    v1.24.3 安全加固（M7A-01）：GitHub Release API 自 2024 年起为每个资产返回
+    `digest: "sha256:<64hex>"`，该值经 TLS 校验的 API 通道取得，可作为更新包
+    的真实性锚点。第三方加速镜像可替换包体但无法替换该值 —— 下载后比对，
+    不符即丢弃该来源。
+
+    返回 64 位小写 hex；无该字段（旧 API / gitea / 自建源）→ ""。
+    """
+    if not isinstance(j, dict) or asset_name == "":
+        return ""
+    for a in j.get("assets") or []:
+        if not isinstance(a, dict):
+            continue
+        if str(a.get("name") or "") != asset_name:
+            continue
+        d = str(a.get("digest") or "").strip().lower()
+        if d.startswith("sha256:") and re.fullmatch(r"[0-9a-f]{64}", d[7:]):
+            return d[7:]
+    return ""
+
+
 def check_update() -> dict:
     if not cfg.UPDATE_ENABLED:
         return {"ok": True, "enabled": False}
@@ -223,6 +252,7 @@ def check_update() -> dict:
         "current": cfg.PANEL_VERSION,
         "note": note,
         "asset": asset,
+        "digest_ok": _asset_digest(j, asset) != "",
         "update_mode": panel_update_mode(),
     }
 
@@ -697,10 +727,16 @@ def do_update() -> dict:
     if isinstance(j, dict):
         zip_url, asset = _zip_asset(j)
         if zip_url:
+            # v1.24.3 安全加固（M7A-01）：以 Release 资产的 sha256 为唯一真实性锚点。
+            # 有 digest → 任何来源（含第三方镜像）都必须哈希一致才换入；
+            # 无 digest → 第三方镜像运营方不可问责，只接受官方源。
+            want = _asset_digest(j, asset)
             errors: list[str] = []
             data = None
             src = "官方源"
             for name, url in _zip_urls(zip_url):
+                if want == "" and name != "官方源":
+                    continue
                 b = http_bytes(url, 60)
                 if b is None:
                     errors.append(f"{name}下载失败")
@@ -708,12 +744,20 @@ def do_update() -> dict:
                 if len(b) < 20_000:
                     errors.append(f"{name}包体异常({len(b)}B)")
                     continue
+                if want:
+                    got = _sha256(b)
+                    if not hmac.compare_digest(got, want):
+                        errors.append(
+                            f"{name}完整性校验失败（sha256 {got[:12]}… ≠ 期望 {want[:12]}…）"
+                        )
+                        continue
                 data, src = b, name
                 break
             if data is None:
                 detail = "；".join(errors)
                 return {"ok": False,
-                        "msg": f"所有更新源下载失败（{detail}）。请检查服务器网络，或在服务器配置代理后重试"}
+                        "msg": f"所有更新源下载失败或未通过完整性校验（{detail}）。"
+                               f"请检查服务器网络，或在服务器配置代理后重试"}
             if not _zip_struct_ok(data):
                 return {"ok": False, "msg": "更新包结构异常（缺少 panel_migr 主程序），已中止"}
             try:
@@ -732,9 +776,10 @@ def do_update() -> dict:
                 return res
             tail = _schedule_restart()
             rt_tip = "，运行环境已重建" if res.get("rebuilt") else ""
+            vtip = "，sha256 校验通过" if want else "，官方源直连（该 Release 未提供哈希）"
             return {"ok": True,
-                    "msg": (f"已更新到 v{newver}（来源：{src}，资产 {asset}）{tail}{rt_tip}；"
-                            f"旧版本已备份为 {Path(bak).name}")}
+                    "msg": (f"已更新到 v{newver}（来源：{src}，资产 {asset}）{vtip}"
+                            f"{tail}{rt_tip}；旧版本已备份为 {Path(bak).name}")}
 
     # —— 旧版回退：PHP release 的 index.php 流程（行为与旧版一致）——
     errors = []
@@ -777,7 +822,7 @@ def ghcr_config_created(auth: str, base: str, digest: str, timeout: int = 10) ->
         r = httpx.get(
             base + "/blobs/" + digest,
             headers={"Authorization": auth, "Accept": "application/vnd.oci.image.config.v1+json"},
-            timeout=httpx.Timeout(timeout, connect=5), follow_redirects=True, verify=False,
+            timeout=httpx.Timeout(timeout, connect=5), follow_redirects=True,
         )
         j = r.json() if r.status_code == 200 else None
         return str(j.get("created") or "") if isinstance(j, dict) else ""
@@ -793,7 +838,7 @@ def ghcr_latest_created(timeout: int = 10) -> str:
     try:
         r = httpx.get(
             f"https://ghcr.io/token?scope=repository:{repo}:pull",
-            headers=hdr, timeout=httpx.Timeout(timeout, connect=5), verify=False,
+            headers=hdr, timeout=httpx.Timeout(timeout, connect=5),
         )
         token = str((r.json() or {}).get("token") or "")
         if token == "":
@@ -808,7 +853,7 @@ def ghcr_latest_created(timeout: int = 10) -> str:
             "application/vnd.docker.distribution.manifest.v2+json",
         ])
         r2 = httpx.get(base + "/manifests/latest", headers=ah,
-                       timeout=httpx.Timeout(timeout, connect=5), verify=False)
+                       timeout=httpx.Timeout(timeout, connect=5))
         if r2.status_code != 200:
             return ""
         j = r2.json()
@@ -829,7 +874,7 @@ def ghcr_latest_created(timeout: int = 10) -> str:
             "application/vnd.docker.distribution.manifest.v2+json",
         ])
         r3 = httpx.get(base + "/manifests/" + digest, headers=ah2,
-                       timeout=httpx.Timeout(timeout, connect=5), verify=False)
+                       timeout=httpx.Timeout(timeout, connect=5))
         if r3.status_code != 200:
             return ""
         j3 = r3.json()

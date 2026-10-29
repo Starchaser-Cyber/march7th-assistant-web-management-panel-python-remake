@@ -238,14 +238,14 @@ def test_get_upstream_healthy_returns_base(fake_run_cmd, bypass_health):
 # ---------- HTTP 透传 ----------
 
 def test_health_proxy_passthrough(fake_run_cmd, bypass_health, http_upstream):
-    r = client.get("/m7a-preview/health")
+    r = client.get("/m7a-preview/health", cookies=_authed_cookies())
     assert r.status_code == 200
     d = r.json()
     assert d["ok"] is True and d["cdp"] is True
 
 
 def test_stream_proxy_mjpeg_passthrough(fake_run_cmd, bypass_health, http_upstream):
-    r = client.get("/m7a-preview/stream?token=x&res=720p")
+    r = client.get("/m7a-preview/stream?token=x&res=720p", cookies=_authed_cookies())
     assert r.status_code == 200
     assert "multipart/x-mixed-replace" in r.headers.get("content-type", "")
     assert b"\xff\xd8\xff" in r.content
@@ -254,9 +254,26 @@ def test_stream_proxy_mjpeg_passthrough(fake_run_cmd, bypass_health, http_upstre
 def test_proxy_503_when_upstream_down(monkeypatch, fake_run_cmd):
     """上游不可达（探测+自愈均失败）→ 503 + 中文错误（不再误转发给 PHP）。"""
     monkeypatch.setattr(cfg, "PREVIEW_UPSTREAM_PORT", 1)
-    r = client.get("/m7a-preview/health")
+    r = client.get("/m7a-preview/health", cookies=_authed_cookies())
     assert r.status_code == 503
     assert r.json()["ok"] is False
+
+
+def test_preview_proxy_requires_auth(fake_run_cmd, bypass_health, http_upstream):
+    """v1.24.3（M7A-04）：/m7a-preview/* 未登录一律 401，不再把信任边界交给上游。"""
+    r = client.get("/m7a-preview/health")
+    assert r.status_code == 401
+    assert r.json()["auth"] is False
+
+
+def test_preview_ws_requires_auth(fake_run_cmd, bypass_health):
+    """v1.24.3（M7A-04）：普通帧流 WS 未登录 → close(1008)。"""
+    from starlette.websockets import WebSocketDisconnect
+
+    with pytest.raises(WebSocketDisconnect) as ei:
+        with client.websocket_connect("/m7a-preview/ws?token=t") as ws:
+            ws.receive_bytes()
+    assert ei.value.code == 1008
 
 
 # ---------- WebSocket 反代 ----------
@@ -265,7 +282,8 @@ def test_ws_preview_relays_upstream_frames(fake_run_cmd, bypass_health, monkeypa
     jpeg = _make_jpeg()
     port = _start_ws_upstream(jpeg)
     monkeypatch.setattr(cfg, "PREVIEW_UPSTREAM_PORT", port)
-    with client.websocket_connect("/m7a-preview/ws?token=t&res=720p") as ws:
+    with client.websocket_connect("/m7a-preview/ws?token=t&res=720p",
+                                  cookies=_authed_cookies()) as ws:
         data = ws.receive_bytes()
     assert data[:2] == b"\xff\xd8"  # JPEG SOI：上游帧原样透传
 
@@ -277,7 +295,8 @@ def test_ws_preview_upstream_down_closes_with_error(fake_run_cmd, monkeypatch):
         return False
 
     monkeypatch.setattr(pv, "health_ok", _never)
-    with client.websocket_connect("/m7a-preview/ws?token=t") as ws:
+    with client.websocket_connect("/m7a-preview/ws?token=t",
+                                  cookies=_authed_cookies()) as ws:
         msg = ws.receive_text()
     assert "error" in msg and "不可达" in msg
 

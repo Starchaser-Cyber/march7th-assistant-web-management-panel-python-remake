@@ -16,6 +16,7 @@ import asyncio
 import hashlib
 import hmac
 import re
+import shlex
 import shutil
 import time
 from pathlib import Path
@@ -78,9 +79,10 @@ def resolve_upstream(container: str) -> str | None:
     hit = _resolve_cache.get(container)
     if hit and now - hit[1] < 60:
         return hit[0]
+    # v1.24.3 安全加固（M7A-05）：容器名与其他 25 处调用点一致做 shell 引用
     r = run_cmd(
         "docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "
-        + container,
+        + shlex.quote(container),
         timeout=10,
     )
     ip = (r["out"] or "").strip().splitlines()[-1].strip() if r["code"] == 0 else ""
@@ -116,8 +118,10 @@ def ensure_upstream(container: str) -> bool:
     if now - _last_ensure.get(container, 0) < _ENSURE_GAP:
         return False
     _last_ensure[container] = now
+    # v1.24.3 安全加固（M7A-05）：同上，补 shell 引用
     r = run_cmd(
-        f"docker exec -d {container} python3 {config.PREVIEW_SERVER_SCRIPT}",
+        f"docker exec -d {shlex.quote(container)} python3 "
+        f"{shlex.quote(str(config.PREVIEW_SERVER_SCRIPT))}",
         timeout=15,
     )
     return r["code"] == 0

@@ -12,6 +12,13 @@ MAX_FAIL = 5      # 窗口内允许的失败次数
 LOCK = 300.0      # 达到阈值后的锁定时长（秒）
 _CAP = 4096       # 来源数上限（防异常灌入）
 
+# v1.24.3 安全加固（M7A-03）：全局限速兜底。
+# 单 IP 计数可被伪造 X-Forwarded-For 摊薄，故再加一层不分来源的总额度：
+# 60 秒内失败达到 GLOBAL_MAX 次即整体暂停登录，伪造 IP 的收益归零。
+GLOBAL_WINDOW = 60.0
+GLOBAL_MAX = 20
+_gfail: list[float] = []
+
 # ip -> (窗口起点, 窗口内失败次数, 锁定截止时间戳)
 _state: dict[str, tuple[float, int, float]] = {}
 
@@ -66,6 +73,22 @@ def fail(ip: str) -> None:
     _sweep(now)
 
 
+def global_locked() -> int:
+    """全局限速剩余秒数（0=未触发）。不分来源，防伪造 IP 摊薄。"""
+    now = _now()
+    _gfail[:] = [t for t in _gfail if now - t <= GLOBAL_WINDOW]
+    if len(_gfail) >= GLOBAL_MAX:
+        return int(GLOBAL_WINDOW - (now - _gfail[0])) + 1
+    return 0
+
+
+def global_fail() -> None:
+    """记录一次全局失败（与 fail() 并行使用）。"""
+    _gfail.append(_now())
+    if len(_gfail) > GLOBAL_MAX * 4:          # 有界，防无限增长
+        del _gfail[:-GLOBAL_MAX]
+
+
 def ok(ip: str) -> None:
     _state.pop(ip, None)
 
@@ -73,3 +96,4 @@ def ok(ip: str) -> None:
 def reset() -> None:
     """测试辅助：清空全部状态。"""
     _state.clear()
+    _gfail.clear()

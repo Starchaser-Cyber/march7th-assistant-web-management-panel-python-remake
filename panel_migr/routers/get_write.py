@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import time
 from pathlib import Path
 
@@ -131,12 +132,18 @@ def _panel_cfg() -> dict:
 
 
 def _req_key(request) -> str:
-    """key 读取：优先 X-M7A-Key 头（不进访问日志/Referer），兼容 ?key= 过渡（M6 改 cron 后收口）。"""
-    return str(
-        request.headers.get("x-m7a-key")
-        or request.query_params.get("key")
-        or ""
-    )
+    """key 读取：只认 X-M7A-Key 头（不进访问日志/Referer/浏览器历史）。
+
+    v1.24.3 安全加固（M7A-09）：URL 里的 ?key= 会落到 nginx access log、
+    浏览器历史与 Referer，默认不再接受。确有旧 cron 未迁移时，可临时设
+    M7A_ALLOW_KEY_QUERY=1 恢复兼容（迁移完请关闭）。
+    """
+    got = str(request.headers.get("x-m7a-key") or "")
+    if got:
+        return got
+    if os.environ.get("M7A_ALLOW_KEY_QUERY", "0") != "0":
+        return str(request.query_params.get("key") or "")
+    return ""
 
 
 def h_monitor_sampler(request) -> Response:
@@ -146,9 +153,11 @@ def h_monitor_sampler(request) -> Response:
         import binascii
         import os
 
-        key = binascii.hexlify(os.urandom(8)).decode("ascii")
+        key = binascii.hexlify(os.urandom(16)).decode("ascii")   # v1.24.3：128-bit
         panel_config_save({"monitor_key": key})
-    if _req_key(request) != key:
+    # v1.24.3 安全加固（M7A-06）：与其他 key 回调一致走常量时间比对
+    got = _req_key(request)
+    if got == "" or not hmac.compare_digest(got, key):
         return JSONResponse({"ok": False, "msg": "invalid key"})
     inst = _inst(request)
     r = services_monitor_sample(inst, 60)

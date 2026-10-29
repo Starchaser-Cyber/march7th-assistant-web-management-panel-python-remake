@@ -502,15 +502,18 @@ var _monTimer = null;
 var _monRange = '1h';
 function loadECharts(cb) {
   if (window.echarts) { if (cb) cb(); return; }
+  /* v1.24.3 安全加固（M7A-07）：echarts 随包本地分发（/static/vendor/echarts.min.js），
+     不再依赖公共 CDN —— 公共 CDN 若被投毒即可注入脚本窃取管理员会话；
+     首选本地（离线可用），仅本地缺失时才退到 CDN 兜底。 */
   var urls = [
-    'https://cdn.bootcdn.net/ajax/libs/echarts/5.4.3/echarts.min.js',
+    '/static/vendor/echarts.min.js',
     'https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js'
   ];
   var i = 0;
   function tryNext() {
     if (i >= urls.length) {
       var box = document.getElementById('monChart');
-      if (box) box.innerHTML = '<div style="text-align:center;color:var(--muted);padding-top:110px;font-size:13px;">⚠️ 图表库加载失败（需外网 CDN），上方数字指标仍可用</div>';
+      if (box) box.innerHTML = '<div style="text-align:center;color:var(--muted);padding-top:110px;font-size:13px;">⚠️ 图表库加载失败，上方数字指标仍可用</div>';
       return;
     }
     var s = document.createElement('script');

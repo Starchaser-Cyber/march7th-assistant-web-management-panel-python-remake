@@ -126,6 +126,13 @@ async def catch_all(request: Request, full_path: str):
     if request.method == "GET":
         if full_path.startswith("m7a-preview/"):
             # M3：/m7a-preview/* 反代容器内 preview_server（动态 IP + 自愈）
+            # v1.24.3 安全加固（M7A-04）：反代前先做本地鉴权。原先信任边界完全落在
+            # 容器内 preview_server（不在交付包内、无法审计），未登录者可直接经面板
+            # 反代观看游戏画面。预览本就只在登录后使用，加鉴权不影响正常功能。
+            if not is_auth(request.state.session):
+                return JSONResponse(
+                    {"ok": False, "auth": False, "msg": "未登录"}, status_code=401
+                )
             from routers.preview import proxy_http
 
             return await proxy_http(request)
@@ -166,13 +173,17 @@ async def ws_proxy(websocket: WebSocket, full_path: str):
         await ws_events(websocket)
         return
     if full_path.startswith("m7a-preview/"):
-        # M3：预览 WebSocket 由面板反代容器 preview_server（token 由上游校验）
+        # M3：预览 WebSocket 由面板反代容器 preview_server
         from routers.preview import ws_preview, ws_h264
 
         websocket.state.session = load_session(websocket)
         if full_path == "m7a-preview/ws264":
-            await ws_h264(websocket)
+            await ws_h264(websocket)          # 自带 day_token 本地校验
         else:
+            # v1.24.3 安全加固（M7A-04）：普通帧流 WS 同样要求登录态
+            if not is_auth(websocket.state.session):
+                await websocket.close(code=1008, reason="unauthorized")
+                return
             await ws_preview(websocket)
         return
     target = _ws_forward_target("/" + full_path)

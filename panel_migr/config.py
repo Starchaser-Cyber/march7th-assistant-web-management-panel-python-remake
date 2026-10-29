@@ -24,10 +24,13 @@ HISTORY_KEEP = 200               # 历史最多保留条数
 SCHEDULE_WINDOW_SECONDS = 1800   # 计划任务补跑窗口（M2+）
 
 # ===== 面板自身更新（与 index.php define() 对齐，M4 可用环境变量覆盖）=====
-PANEL_VERSION = os.environ.get("M7A_PANEL_VERSION", "1.24.2")
+PANEL_VERSION = os.environ.get("M7A_PANEL_VERSION", "1.24.3")
 UPDATE_ENABLED = True
 UPDATE_TYPE = "github"           # gitea / github
-UPDATE_HOST = os.environ.get("M7A_UPDATE_HOST", "https://github.com")
+_UPDATE_HOST_RAW = os.environ.get("M7A_UPDATE_HOST", "https://github.com").strip().rstrip("/")
+# v1.24.3 安全加固（M7A-11）：更新源必须走 https，非 https 一律回落到官方默认值，
+# 避免环境变量被改成明文/内网地址后「官方更新」变成投递恶意包的通道。
+UPDATE_HOST = _UPDATE_HOST_RAW if _UPDATE_HOST_RAW.startswith("https://") else "https://github.com"
 UPDATE_OWNER = os.environ.get("M7A_UPDATE_OWNER", "starchaser-cyber")
 UPDATE_REPO = os.environ.get("M7A_UPDATE_REPO", "march7th-assistant-web-management-panel-python-remake")
 UPDATE_BRANCH = "main"
@@ -54,8 +57,17 @@ INSTANCES_FILE = BASE_DIR / ".instances.php"
 PANEL_CONFIG_FILE = BASE_DIR / ".panel_config.php"
 PASS_FILE = BASE_DIR / ".panel_pass.php"
 
-# ===== PHP session 共享（登录态互通的关键）=====
-SESSION_SAVE_PATH = os.environ.get("M7A_SESSION_DIR", "/tmp")
+# ===== session 存储（登录态）=====
+# v1.24.3 安全加固（M7A-02）：默认目录从 world-writable 的 /tmp 移入面板私有目录，
+# 文件权限 0666 → 0660。原先 /tmp/sess_<sid> 为 0666，任何本地账号都能往有效 sid
+# 里追加 `m7a_panel_auth|b:1;` 伪造管理员登录（面板以 root 运行 → 本地提权）。
+# 若仍需与 PHP-fpm(www) 共享登录态：把两端 session.save_path 指向同一私有目录，
+# 并 chgrp www；确需 0666 时显式设 M7A_SESSION_MODE=666（不推荐）。
+SESSION_SAVE_PATH = os.environ.get("M7A_SESSION_DIR", str(BASE_DIR / "sessions"))
+try:
+    SESSION_FILE_MODE = int(os.environ.get("M7A_SESSION_MODE", "660"), 8) & 0o777
+except ValueError:
+    SESSION_FILE_MODE = 0o660
 
 # ===== M6 后端整合（Python 唯一后端）=====
 # v1.22 起 Python 为唯一后端：未匹配的页面/GET 由 Python 本地渲染，不再转发回旧站点。

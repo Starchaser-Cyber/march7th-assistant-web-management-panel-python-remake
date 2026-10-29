@@ -165,14 +165,36 @@ def test_alert_send_routes_by_severity(monkeypatch):
     al.alert_send("标题", "正文", ov, severity="critical")
     assert "sctapi.ftqq.com/K1.send" in calls[-1]
 
-    al.alert_send("标题", "正文", ov, severity="info")
-    assert calls[-1] == "K1"                     # webhook 直推目标地址
+    # webhook 通道：v1.24.3 起目标必须是合法 http(s) 公网地址（M7A-08 加固）
+    hook = dict(ov, target="https://hooks.example.com/notify")
+    al.alert_send("标题", "正文", hook, severity="info")
+    assert calls[-1] == "https://hooks.example.com/notify"
 
     al.alert_send("标题", "正文", ov, severity="warn")
     assert calls[-1].startswith("https://api.day.app/K1/")
 
     al.alert_send("标题", "正文", ov)             # 缺省 = warn，向后兼容
     assert calls[-1].startswith("https://api.day.app/K1/")
+
+
+def test_webhook_rejects_internal_and_bad_scheme(monkeypatch):
+    """v1.24.3（M7A-08）：webhook 目标拒绝内网/回环/保留地址与非 http(s) 协议。"""
+    calls = []
+    monkeypatch.setattr(al, "http_post",
+                        lambda url, *a, **k: (calls.append(url), {"code": 200, "body": "ok"})[1])
+
+    bad = ["http://127.0.0.1:8080/hook", "http://169.254.169.254/latest/meta-data",
+           "http://10.0.0.5/notify", "http://localhost/hook", "file:///etc/passwd", ""]
+    for target in bad:
+        ov = {"enable": True, "channel": "webhook", "target": target}
+        r = al.alert_send("标题", "正文", ov, severity="info")
+        assert r["ok"] is False, f"应拒绝 {target!r}"
+    assert calls == [], "被拒绝的目标不应发生任何外发请求"
+
+    # 公网地址正常放行
+    ok_ov = {"enable": True, "channel": "webhook", "target": "https://hooks.example.com/x"}
+    r = al.alert_send("标题", "正文", ok_ov, severity="info")
+    assert r["ok"] is True and calls[-1] == "https://hooks.example.com/x"
 
 
 def test_alert_send_level_channel_falls_back_to_main(monkeypatch):

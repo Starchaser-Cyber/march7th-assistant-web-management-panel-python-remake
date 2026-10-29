@@ -106,7 +106,7 @@ def _panel_context(request, inst: dict, notify_check) -> dict:
     mon = panel_config()
     mon_key = str(mon.get("monitor_key") or "")
     if not mon_key:
-        mon_key = secrets.token_hex(8)
+        mon_key = secrets.token_hex(16)
         panel_config_save({"monitor_key": mon_key})
     mon_iv = max(1, int(mon.get("monitor_interval") or 1))
     mon_cron = f'curl -s "{base}/action?monitor_sampler=1&key={mon_key}" >/dev/null 2>&1'
@@ -114,7 +114,7 @@ def _panel_context(request, inst: dict, notify_check) -> dict:
     # [4] alerter key 惰性生成 + cron 行
     al_key = str(mon.get("alerter_key") or "")
     if not al_key:
-        al_key = secrets.token_hex(8)
+        al_key = secrets.token_hex(16)
         panel_config_save({"alerter_key": al_key})
     al_cron = f'curl -s "{base}/action?alerter=1&key={al_key}" >/dev/null 2>&1'
 
@@ -133,7 +133,7 @@ def _panel_context(request, inst: dict, notify_check) -> dict:
     sched_cfg = panel_config()
     sch_key = str(sched_cfg.get("scheduler_key") or "")
     if not sch_key:
-        sch_key = secrets.token_hex(8)
+        sch_key = secrets.token_hex(16)
         panel_config_save({"scheduler_key": sch_key})
     sch_cron = f'curl -s "{base}/action?scheduler=1&key={sch_key}" >/dev/null 2>&1'
     sch_builtin = config_scheduled_tasks_count(inst)

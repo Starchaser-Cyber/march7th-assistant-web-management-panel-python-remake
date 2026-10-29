@@ -105,10 +105,26 @@ async def render(request, result) -> Response:
 
 
 def _client_ip(request) -> str:
-    """限速来源：优先 X-Forwarded-For 首段（nginx 追加真实来源），否则直连地址。"""
+    """限速来源判定（v1.24.3 安全加固 M7A-03）。
+
+    旧实现取 X-Forwarded-For **首段**：nginx 的 $proxy_add_x_forwarded_for 把
+    客户端自带的 XFF 拼在最前面，攻击者每次请求换一个假 IP 就落进全新计数桶，
+    5 次阈值永远凑不满 → 限速形同虚设（只剩 bcrypt 成本，弱密码可被在线爆破）。
+
+    改为按可信度取：
+    1) X-Real-IP（nginx 用 $remote_addr 显式覆盖，客户端无法注入）；
+    2) XFF **最后一段**（离本机最近一跳追加的地址，伪造值会被真实 IP 顶掉）；
+    3) TCP 直连地址。
+    另在 loginguard 增加不分来源的全局兜底速率，使伪造 IP 的收益归零。
+    """
+    real = str(request.headers.get("x-real-ip") or "").strip()
+    if real:
+        return real
     xff = str(request.headers.get("x-forwarded-for") or "")
     if xff:
-        return xff.split(",")[0].strip() or "-"
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        if parts:
+            return parts[-1]
     return request.client.host if request.client else "-"
 
 
@@ -146,6 +162,9 @@ def h_setup_pass(request, form, session, sid):
 def h_login(request, form, session, sid):
     p = str(form.get("pass") or "")
     ip = _client_ip(request)
+    gl = lg.global_locked()
+    if gl > 0:                                   # 全局限速兜底（M7A-03）
+        return F(err=f"登录尝试过多，请 {gl} 秒后再试")
     if not lg.check(ip):
         return F(err=f"尝试过于频繁，请 {lg.remaining(ip)} 秒后再试")
     if passwd.check_pass(p):
@@ -160,6 +179,7 @@ def h_login(request, form, session, sid):
             session_remove(old_sid, cfg.SKEY)  # 旧会话注销（尽力而为）
         return RD(set_sid=sid)
     lg.fail(ip)
+    lg.global_fail()
     return F(err="密码错误")
 
 

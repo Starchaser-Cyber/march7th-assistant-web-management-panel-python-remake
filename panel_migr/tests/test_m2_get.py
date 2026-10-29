@@ -167,8 +167,14 @@ def test_export_log_with_file():
 
 # ---------- W2：3 个 key 回调 ----------
 
+def keyed(qs, key=None):
+    """v1.24.3（M7A-09）：key 一律走 X-M7A-Key 头；?key= 默认不再接受。"""
+    hdr = {"X-M7A-Key": key} if key is not None else {}
+    return client.get("/?" + qs, headers=hdr, follow_redirects=False)
+
+
 def test_monitor_sampler_invalid_key():
-    d = get("monitor_sampler=1&key=wrong").json()
+    d = keyed("monitor_sampler=1", "wrong").json()
     assert d == {"ok": False, "msg": "invalid key"}
 
 
@@ -183,7 +189,7 @@ def test_monitor_sampler_ok(monkeypatch):
                         lambda inst, iv: {"sampled": True, "running": False,
                                           "data": {"points": [1, 2, 3]}})
     monkeypatch.setattr(G, "alert_tick", lambda inst, force=False: {"pushed": True})
-    d = get("monitor_sampler=1&key=mk-123").json()
+    d = keyed("monitor_sampler=1", "mk-123").json()
     assert d == {"ok": True, "sampled": True, "running": False,
                  "points": 3, "alert": True}
 
@@ -193,18 +199,18 @@ def test_scheduler_forbidden_and_ok(monkeypatch):
     from services.instances import panel_config_save
 
     # 未配置 key → 403
-    d = client.get("/?scheduler=1&key=nope", follow_redirects=False)
+    d = keyed("scheduler=1", "nope")
     assert d.status_code == 403
     assert d.json() == {"ok": False, "msg": "forbidden"}
     # 空 key → 403
-    assert client.get("/?scheduler=1", follow_redirects=False).status_code == 403
+    assert keyed("scheduler=1").status_code == 403
 
     panel_config_save({"scheduler_key": "sk-1"})
     monkeypatch.setattr(G, "schedule_run_due",
                         lambda inst, now=None: {"ok": True, "time": "12:00",
                                                 "ran": [], "skipped": []})
     monkeypatch.setattr(G, "alert_tick", lambda inst, force=False: {"pushed": False})
-    d = client.get("/?scheduler=1&key=sk-1", follow_redirects=False).json()
+    d = keyed("scheduler=1", "sk-1").json()
     assert d["ok"] is True and d["alert"] is False
 
 
@@ -212,17 +218,32 @@ def test_alerter_forbidden_and_ok(monkeypatch):
     import routers.get_write as G
     from services.instances import panel_config_save
 
-    assert client.get("/?alerter=1&key=nope", follow_redirects=False).status_code == 403
+    assert keyed("alerter=1", "nope").status_code == 403
     panel_config_save({"alerter_key": "ak-1"})
     monkeypatch.setattr(G, "alert_tick",
                         lambda inst, force=False: {"pushed": True, "msg": "已推送"})
-    d = client.get("/?alerter=1&key=ak-1", follow_redirects=False).json()
+    d = keyed("alerter=1", "ak-1").json()
     assert d == {"pushed": True, "msg": "已推送"}
 
 
 def test_key_callbacks_no_auth_required():
     """key 回调免登录：不带 cookie 也能到达比对逻辑（返回 invalid/forbidden 而非登录页）。"""
-    d = client.get("/?monitor_sampler=1&key=x", cookies={}, follow_redirects=False)
+    d = keyed("monitor_sampler=1", "x")
     assert d.status_code == 200 and d.json()["ok"] is False
-    d2 = client.get("/?scheduler=1&key=x", cookies={}, follow_redirects=False)
+    d2 = keyed("scheduler=1", "x")
     assert d2.status_code == 403
+
+
+def test_key_in_query_rejected_by_default(monkeypatch):
+    """v1.24.3（M7A-09）：?key= 落 nginx 日志/浏览器历史，默认拒绝；
+    设 M7A_ALLOW_KEY_QUERY=1 才恢复旧 cron 兼容。"""
+    from services.instances import panel_config_save
+
+    panel_config_save({"scheduler_key": "sk-q"})
+    d = client.get("/?scheduler=1&key=sk-q", follow_redirects=False)
+    assert d.status_code == 403, "默认应拒绝 URL 里的 key"
+
+    monkeypatch.setenv("M7A_ALLOW_KEY_QUERY", "1")
+    d2 = client.get("/?scheduler=1&key=sk-q", follow_redirects=False)
+    assert d2.status_code != 403, "显式开启兼容后应可用"
+    monkeypatch.delenv("M7A_ALLOW_KEY_QUERY", raising=False)

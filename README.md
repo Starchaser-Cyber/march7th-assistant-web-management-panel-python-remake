@@ -4,8 +4,8 @@
 
 ![许可证](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Python 版本](https://img.shields.io/badge/python-3.11%2B-green)
-![最新版本](https://img.shields.io/badge/version-V1.24.2-orange)
-![构建状态](https://img.shields.io/badge/build-282%20tests%20passing-brightgreen)
+![最新版本](https://img.shields.io/badge/version-V1.24.3-orange)
+![构建状态](https://img.shields.io/badge/build-318%20tests%20passing-brightgreen)
 ![Stars](https://img.shields.io/github/stars/Starchaser-Cyber/march7th-assistant-web-management-panel-python-remake?style=flat)
 
 ## 项目详细介绍
@@ -18,7 +18,7 @@
 
 - ✅ 适配已部署 Docker 版小助手的玩家；还没部署的，先按下方 [快速开始](#-快速开始--部署教程) 从零搞定（约 20 分钟）
 - ✅ 纯 Python 依赖、文件存储（JSON + SQLite 事件库），**无需数据库**，开箱即用
-- ✅ 273 个 pytest 自动化测试、`routers` / `services` 清晰分层，方便二次开发
+- ✅ 318 个 pytest 自动化测试、`routers` / `services` 清晰分层，方便二次开发
 - ✅ 手机、电脑浏览器均可使用
 
 ## ✨ 核心特性
@@ -70,7 +70,7 @@
 - **WebSocket 事件流**：日志、监控、告警实时推送，页面无需刷新
 - **systemd 常驻**：`Restart=always` 崩溃自动重启、开机自启；默认仅监听 `127.0.0.1`
 - **可靠数据落盘**：监控数据原子写（临时文件 + `os.replace`），杜绝并发写坏 JSON
-- **可测试**：pytest 回归 `273 passed, 3 skipped`，路由层与业务层分离
+- **可测试**：pytest 回归 `318 passed, 3 skipped`，路由层与业务层分离
 
 ## 界面预览 / 效果展示
 
@@ -497,7 +497,7 @@ journalctl -u m7a-panel -f      # 实时查看面板日志
     ├── templates/panel.html.j2    #   Jinja2 页面模板
     ├── static/                    #   前端 CSS / JS
     ├── scripts/                   #   辅助脚本
-    └── tests/                     #   pytest 测试（273 用例）
+    └── tests/                     #   pytest 测试（318 用例）
 ```
 
 > `.panel_pass.php`、`.env`、`data/`、`sessions/`、`backups/`、`*.log` 等运行时与敏感文件已被 `.gitignore` 排除，不会进入版本库。

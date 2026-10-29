@@ -1,0 +1,11 @@
+# m7a_panel V1.24.3 已知可用版本锁定（282+ 项测试通过的环境）
+# 用法：pip install -r requirements.lock
+# 说明：这是「实测通过的确切版本」快照，用于可复现部署与审计；
+#       requirements.txt 保留语义化下限，供需要较新版本时使用。
+fastapi==0.141.1
+starlette==1.3.1
+uvicorn==0.44.0
+httpx==0.28.1
+bcrypt==5.0.0
+python-multipart==0.0.21
+jinja2==3.1.6

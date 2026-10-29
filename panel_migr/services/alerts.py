@@ -236,11 +236,50 @@ def alert_send(title: str, body: str, override: dict | None = None,
                       {"title": title, "desp": body}, 8, False)
         code = int(r["code"])
         return {"ok": 200 <= code < 300, "msg": f"Server酱 返回 HTTP {code}"}
+    ok_url, why = _webhook_url_ok(target)
+    if not ok_url:
+        return {"ok": False, "msg": why}
     r = http_post(target, {"title": title, "body": body,
                            "severity": sev,
                            "time": time.strftime("%Y-%m-%d %H:%M:%S")}, 8, True)
     code = int(r["code"])
     return {"ok": 200 <= code < 300, "msg": f"Webhook 返回 HTTP {code}"}
+
+
+def _webhook_url_ok(url: str) -> tuple[bool, str]:
+    """v1.24.3 安全加固（M7A-08）：webhook 目标校验。
+
+    target 来自管理员配置的任意 URL，原先直接 POST —— 一旦管理员会话被劫持，
+    即可用它探测内网/云 metadata（SSRF 枢纽）。这里限制为 http(s) 并拒绝
+    回环、链路本地（含 169.254.169.254）与 RFC1918 私网字面量地址。
+    注意：仅做字面量判断，不做 DNS 解析（不引入解析放大与阻塞风险），
+    域名解析到内网仍可能绕过 —— 管理员配置项按可信输入对待。
+    """
+    from urllib.parse import urlparse
+
+    u = (url or "").strip()
+    if u == "":
+        return False, "未配置 Webhook 地址"
+    try:
+        pr = urlparse(u)
+    except ValueError:
+        return False, "Webhook 地址无法解析"
+    if pr.scheme not in ("http", "https"):
+        return False, "Webhook 仅支持 http/https"
+    host = (pr.hostname or "").lower()
+    if host == "":
+        return False, "Webhook 地址缺少主机名"
+    if host in ("localhost", "localhost.localdomain") or host.endswith(".localhost"):
+        return False, "Webhook 不允许指向本机"
+    import ipaddress
+
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return True, ""                      # 域名：放行（不解析）
+    if ip.is_loopback or ip.is_link_local or ip.is_private or ip.is_reserved:
+        return False, "Webhook 不允许指向内网或保留地址"
+    return True, ""
 
 
 def _publish_alert(inst: dict, kind: str, title: str, body: str,

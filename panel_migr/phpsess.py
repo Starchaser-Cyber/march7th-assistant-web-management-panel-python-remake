@@ -12,7 +12,7 @@ import secrets
 import string
 from pathlib import Path
 
-from config import SESSION_SAVE_PATH, SKEY
+from config import SESSION_FILE_MODE, SESSION_SAVE_PATH, SKEY
 
 _SID_RE = re.compile(r"[A-Za-z0-9,\-]{1,128}")
 
@@ -141,29 +141,33 @@ def _session_path(sid: str) -> Path | None:
 def _write_session_file(path: Path, text: str) -> None:
     """写回 session 文件（M2-R：绕开内核 fs.protected_regular）。
 
-    在 world-writable sticky 目录（/tmp）中，对「非目录属主」的已存在普通文件用
-    O_CREAT 方式（open(path,"w") / Path.write_text）打开，会被内核以 EACCES 拒绝，
-    即使 uid=0 且具备全部 capabilities（服务器实测：登录态写不进 → 登录死循环）。
+    对「非目录属主」的已存在普通文件用 O_CREAT 方式（open(path,"w") /
+    Path.write_text）打开，会被内核以 EACCES 拒绝，即使 uid=0 且具备全部
+    capabilities（服务器实测：登录态写不进 → 登录死循环）。
     故：
-    - 文件已存在 → O_WRONLY|O_TRUNC（无 O_CREAT）打开，保留原 inode/属主/权限，
-      PHP(www) 之后按原权限 O_RDWR 打开不受影响；
+    - 文件已存在 → O_WRONLY|O_TRUNC（无 O_CREAT）打开，保留原 inode/属主/权限；
     - 文件不存在 → O_CREAT|O_EXCL 新建（新文件属主 = 目录属主，保护不触发），
-      并 chmod 0666 覆盖 umask，保证 PHP-fpm(www) 可读写。
+      并 chmod 到 SESSION_FILE_MODE 覆盖 umask。
+
+    v1.24.3 安全加固（M7A-02）：权限默认 0660（原 0666）。session 里承载登录态，
+    0666 意味着同机任何账号都能往有效 sid 追加 `m7a_panel_auth|b:1;` 直接获得
+    管理员权限；而面板以 root 运行，等价于本地提权。需要与 PHP-fpm(www) 共享时
+    用同组 + 0660，不要回退到 0666（确需则显式 M7A_SESSION_MODE=666）。
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     data = text.encode("utf-8")
     created = False
     try:
         fd = os.open(path, os.O_WRONLY | os.O_TRUNC)
     except FileNotFoundError:
         try:
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, SESSION_FILE_MODE)
             created = True
         except FileExistsError:          # 并发创建竞态 → 按已存在打开
             fd = os.open(path, os.O_WRONLY | os.O_TRUNC)
     with os.fdopen(fd, "wb") as f:
         if created:
-            os.chmod(path, 0o666)
+            os.chmod(path, SESSION_FILE_MODE)
         f.write(data)
 
 

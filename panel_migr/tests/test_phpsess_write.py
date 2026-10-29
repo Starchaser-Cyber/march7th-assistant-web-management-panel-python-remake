@@ -68,12 +68,14 @@ def _foreign_file(d: Path, sid: str, text: str, mode: int) -> Path:
 
 # ---------- 1. 基础：新建 / 改写 / 删除 ----------
 
-def test_new_session_file_created_666(sess_dir):
+def test_new_session_file_created_660(sess_dir):
     sid = "writeok01"
     assert session_set(sid, "m7a_panel_auth", True) is True
     f = sess_dir / f"sess_{sid}"
     assert f.is_file()
-    assert (f.stat().st_mode & 0o777) == 0o666          # PHP(www) 需要 O_RDWR
+    # v1.24.3（M7A-02）：不再 0666，默认 0660（同伴可读写，其他人不可）
+    assert (f.stat().st_mode & 0o777) == phpsess.SESSION_FILE_MODE
+    assert (f.stat().st_mode & 0o777) != 0o666
     assert parse_session(f.read_text("utf-8"))["m7a_panel_auth"] is True
 
 
@@ -178,8 +180,8 @@ def test_existing_file_opened_without_ocreate(sess_dir, monkeypatch):
     assert parse_session((sess_dir / f"sess_{sid}").read_text("utf-8"))["k"] == 2
 
 
-def test_missing_file_created_excl_with_666(sess_dir, monkeypatch):
-    """文件不存在 → 先无 CREAT 探测（FNFE）→ O_CREAT|O_EXCL 新建 mode 0666。"""
+def test_missing_file_created_excl_with_660(sess_dir, monkeypatch):
+    """文件不存在 → 先无 CREAT 探测（FNFE）→ O_CREAT|O_EXCL 新建 SESSION_FILE_MODE。"""
     import os as _os
 
     calls = []
@@ -197,6 +199,6 @@ def test_missing_file_created_excl_with_666(sess_dir, monkeypatch):
     assert not (flags1 & _os.O_CREAT)                    # 探测：无 O_CREAT
     flags2, args2 = calls[1]
     assert flags2 & _os.O_CREAT and flags2 & _os.O_EXCL  # 新建：O_EXCL 防并发覆盖
-    assert args2 and args2[0] == 0o666                   # mode 参数 0666
+    assert args2 and args2[0] == phpsess.SESSION_FILE_MODE   # mode 参数（默认 0660）
     f = sess_dir / f"sess_{sid}"
-    assert (f.stat().st_mode & 0o777) == 0o666           # chmod 覆盖 umask 生效
+    assert (f.stat().st_mode & 0o777) == phpsess.SESSION_FILE_MODE  # chmod 覆盖 umask 生效

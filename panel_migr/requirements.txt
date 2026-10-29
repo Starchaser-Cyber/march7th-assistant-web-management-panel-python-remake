@@ -1,6 +1,12 @@
+# m7a_panel 运行依赖
+# v1.24.3 安全加固：下限收到已修复已知 CVE 的安全版本
+#   - python-multipart: CVE-2024-24762（ReDoS）+ 后续多个 DoS 修复，安全版本 >=0.0.18
+#   - jinja2:           CVE-2024-56201 / CVE-2025-27516，安全版本 >=3.1.6
+#   - starlette（fastapi 传递依赖）: CVE-2024-47874（multipart DoS），安全版本 >=0.40
+# 需要完全可复现的安装环境时改用 requirements.lock（同版本号锁定）。
 fastapi>=0.110
 uvicorn[standard]>=0.29
 httpx>=0.27
 bcrypt>=4.1
-python-multipart>=0.0.9
-jinja2>=3.1
+python-multipart>=0.0.18
+jinja2>=3.1.6
