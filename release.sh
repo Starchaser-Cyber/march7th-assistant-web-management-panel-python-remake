@@ -51,9 +51,10 @@ cmd_package() {
 import sys, time, zipfile
 from pathlib import Path
 src, out = Path(sys.argv[1]), Path(sys.argv[2])
-files = ["00_SUMMARY.md", "AUDIT_INFO.md", "AUDIT_INFO_V1.24.4.md",
+files = ["00_SUMMARY.md", "AUDIT_INFO.md",
+         "AUDIT_INFO_V1.24.5.md", "AUDIT_INFO_V1.24.4.md",
          "A_update.md", "B_auth.md", "C_services.md", "D_handlers.md",
-         "E_v1244_代码质量审计报告.md"]
+         "E_v1244_代码质量审计报告.md", "optimize-assessment.html"]
 dt = time.localtime()[:6]
 with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
     for n in files:
