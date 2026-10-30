@@ -66,6 +66,8 @@ function applyTheme(name) {
   }
   var btnM = document.getElementById('themeBtnM');
   if (btnM) btnM.textContent = THEMES[idx].icon;
+  var btnT = document.getElementById('themeBtnT');
+  if (btnT) btnT.title = '切换主题：' + THEMES[idx].label + ' → ' + THEMES[(idx + 1) % THEMES.length].label;
   try { localStorage.setItem('m7a_theme', THEMES[idx].name); } catch(e) {}
 }
 function toggleTheme() {
@@ -1646,16 +1648,17 @@ function closeSearch() {
   var o = document.getElementById('searchOverlay');
   if (o) o.classList.remove('show');
 }
+var TASK_SLUG = { main:'play', daily:'list', power:'bolt', notify:'alert', divergentloop:'star', universe:'target', currencywars:'trophy', currencywarsloop:'sync' };
 function buildSearchIndex() {
   var idx = [];
-  idx.push({ type: 'page', ico: '🏠', main: '概览页', sub: '页面', kw: '概览 首页 主页 状态 overview', go: 'overview' });
-  idx.push({ type: 'page', ico: '📋', main: '任务页', sub: '页面', kw: '任务 执行 历史 tasks', go: 'tasks' });
-  idx.push({ type: 'page', ico: '📜', main: '日志页', sub: '页面', kw: '日志 输出 排错 log', go: 'log' });
-  idx.push({ type: 'page', ico: '⚙️', main: '配置页', sub: '页面', kw: '配置 设置 参数 config', go: 'config' });
+  idx.push({ type: 'page', ico: 'overview', main: '概览页', sub: '页面', kw: '概览 首页 主页 状态 overview', go: 'overview' });
+  idx.push({ type: 'page', ico: 'tasks', main: '任务页', sub: '页面', kw: '任务 执行 历史 tasks', go: 'tasks' });
+  idx.push({ type: 'page', ico: 'log', main: '日志页', sub: '页面', kw: '日志 输出 排错 log', go: 'log' });
+  idx.push({ type: 'page', ico: 'config', main: '配置页', sub: '页面', kw: '配置 设置 参数 config', go: 'config' });
   Object.keys(window.TASK_LIST || {}).forEach(function(k) {
     var t = TASK_LIST[k];
     if (!t) return;
-    idx.push({ type: 'task', ico: t.icon || '\U0001f3af', main: t.label, sub: '任务', kw: (t.label + ' ' + (t.desc || '') + ' ' + k).toLowerCase(), go: k });
+    idx.push({ type: 'task', ico: TASK_SLUG[k] || 'play', main: t.label, sub: '任务', kw: (t.label + ' ' + (t.desc || '') + ' ' + k).toLowerCase(), go: k });
   });
   document.querySelectorAll('.cfg-row').forEach(function(row) {
     var txt = '';
@@ -1677,14 +1680,14 @@ function buildSearchIndex() {
       var h3 = grp.querySelector('h3');
       if (h3) gname = (h3.textContent || '').replace(/\s+/g, ' ').trim();
     }
-    idx.push({ type: 'cfg', ico: '🔧', main: txt, sub: gname || '配置', kw: (txt + ' ' + gname).toLowerCase(), ref: row });
+    idx.push({ type: 'cfg', ico: 'config', main: txt, sub: gname || '配置', kw: (txt + ' ' + gname).toLowerCase(), ref: row });
   });
-  idx.push({ type: 'act', ico: '\U0001f504', main: '重启容器', sub: '操作', kw: '重启 容器 restart', run: function() { fabAct('restart'); } });
-  idx.push({ type: 'act', ico: '⏸️', main: '停止容器', sub: '操作', kw: '停止 容器 stop', run: function() { fabAct('stop'); } });
-  idx.push({ type: 'act', ico: '⬆️', main: '更新镜像', sub: '操作', kw: '更新 镜像 升级 update', run: function() { if (confirm('更新面板镜像并重建容器？')) doUpdate(); } });
-  idx.push({ type: 'act', ico: '\U0001f5d1️', main: '清空任务历史', sub: '操作', kw: '清空 历史 记录 clear', run: function() { clearHistory(); } });
-  idx.push({ type: 'act', ico: '⬆️', main: '回到顶部', sub: '操作', kw: '顶部 回顶 backtop', run: function() { backToTop(); } });
-  idx.push({ type: 'act', ico: '\U0001f3a8', main: '切换主题', sub: '操作', kw: '主题 颜色 深色 浅色 跟随系统 theme', run: function() { toggleTheme(); } });
+  idx.push({ type: 'act', ico: 'restart', main: '重启容器', sub: '操作', kw: '重启 容器 restart', run: function() { fabAct('restart'); } });
+  idx.push({ type: 'act', ico: 'fail', main: '停止容器', sub: '操作', kw: '停止 容器 stop', run: function() { fabAct('stop'); } });
+  idx.push({ type: 'act', ico: 'update', main: '更新镜像', sub: '操作', kw: '更新 镜像 升级 update', run: function() { if (confirm('更新面板镜像并重建容器？')) doUpdate(); } });
+  idx.push({ type: 'act', ico: 'del', main: '清空任务历史', sub: '操作', kw: '清空 历史 记录 clear', run: function() { clearHistory(); } });
+  idx.push({ type: 'act', ico: 'chevron', main: '回到顶部', sub: '操作', kw: '顶部 回顶 backtop', run: function() { backToTop(); } });
+  idx.push({ type: 'act', ico: 'theme', main: '切换主题', sub: '操作', kw: '主题 颜色 深色 浅色 跟随系统 theme', run: function() { toggleTheme(); } });
   _searchIdx = idx;
 }
 function searchRender(q) {
@@ -1705,7 +1708,7 @@ function searchRender(q) {
   }
   box.innerHTML = _searchHits.map(function(it, i) {
     return '<button type="button" class="search-item' + (i === 0 ? ' sel' : '') + '" onclick="searchGo(' + i + ')">' +
-      '<span class="si-ico">' + it.ico + '</span><span class="si-main">' + it.main + '</span><span class="si-sub">' + (it.sub || '') + '</span></button>';
+      '<span class="si-ico"><svg><use href="/static/icons.svg#i-' + (it.ico || 'info') + '"></use></svg></span><span class="si-main">' + it.main + '</span><span class="si-sub">' + (it.sub || '') + '</span></button>';
   }).join('');
 }
 function searchGo(i) {

@@ -4,7 +4,7 @@
 
 ![许可证](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Python 版本](https://img.shields.io/badge/python-3.11%2B-green)
-![最新版本](https://img.shields.io/badge/version-V1.24.7-orange)
+![最新版本](https://img.shields.io/badge/version-V1.25.0-orange)
 ![构建状态](https://img.shields.io/badge/build-1%2C207%20tests-brightgreen)
 ![Stars](https://img.shields.io/github/stars/Starchaser-Cyber/march7th-assistant-web-management-panel-python-remake?style=flat)
 
@@ -615,6 +615,8 @@ journalctl -u m7a-panel -f      # 实时查看面板日志
     ├── templates/panel.html.j2    #   Jinja2 页面模板
     ├── static/                    #   前端资源
     │   ├── panel.css / panel.js   #     样式与逻辑（原生 JS，零构建）
+    │   ├── icons.svg              #     Fluent 图标 sprite（v1.25，67 个 symbol）
+    │   ├── img/                   #     banner / logo（v1.25）
     │   └── vendor/echarts.min.js  #     图表库随包分发（不依赖公共 CDN）
     ├── scripts/                   #   辅助脚本
     └── tests/                     #   pytest 测试（1,066 用例）

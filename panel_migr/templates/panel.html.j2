@@ -16,6 +16,9 @@
 </head>
 <body>
 
+{% set TASK_IC = {'main':'play','daily':'list','power':'bolt','notify':'alert','divergentloop':'star','universe':'target','currencywars':'trophy','currencywarsloop':'sync'} %}
+{% set OPS_IC = {'restart':'restart','stop_task':'fail','stop_loop':'fail','stop':'fail'} %}
+{% set GRP_IC = {'basic':'config','instance':'target','daily':'gift','activity':'star','schedule':'clock','notify':'alert','notify_serverchan':'send','notify_bark':'send','notify_dingtalk':'send','notify_pushplus':'send','notify_wechat':'send','notify_lark':'send','notify_telegram':'send','notify_gotify':'send','notify_discord':'send','notify_smtp':'send','notify_webhook':'send','notify_matrix':'list','other':'config'} %}
 <!-- v1.15+：磨砂玻璃背景光斑层（纯装饰，pointer-events:none，不参与交互） -->
 <div class="bg-layer" aria-hidden="true">
   <span class="blob blob-1"></span>
@@ -50,6 +53,31 @@
 </div>
 
 {% else %}
+<!-- ===== v1.25：Fluent 标题栏（桌面端 48px，≤1024px 隐藏） ===== -->
+<div class="titlebar">
+  <img class="tb-logo" src="/static/img/logo.png" alt="">
+  <span class="tb-title">M7A WebUI</span>
+  <span class="tb-sub">v{{ PANEL_VERSION }}</span>
+  <div class="tb-mid">
+    <form method="post" id="instFormT" style="display:flex;align-items:center;margin:0;">
+      {{ csrf_field() }}
+      <input type="hidden" name="action" value="instance_switch">
+      <select name="instance_id" class="inst-select" onchange="document.getElementById('instFormT').submit()" title="切换当前实例">
+        {% for it in instances_load() %}{% set cur = instance_current() %}
+        <option value="{{ it['id'] }}" {{ ('selected' if it['id'] == cur['id'] else '') }}>{{ it['name'] }} ({{ it['container'] }})</option>
+        {% endfor %}
+      </select>
+    </form>
+    <button type="button" class="icon-btn" onclick="openInstModal()" title="管理实例"><svg><use href="/static/icons.svg#i-instance"></use></svg></button>
+    <span class="status-badge" id="statusBadgeT"><span class="dot"></span><span class="status-text">检测中…</span></span>
+  </div>
+  <div class="tb-right">
+    <button type="button" class="icon-btn" onclick="openSearch()" title="全局搜索（Ctrl+K）"><svg><use href="/static/icons.svg#i-search"></use></svg></button>
+    <button type="button" class="icon-btn" id="themeBtnT" onclick="toggleTheme()" title="切换主题"><svg><use href="/static/icons.svg#i-theme"></use></svg></button>
+    <form method="post" style="display:inline;margin:0;">{{ csrf_field() }}<input type="hidden" name="action" value="logout"><button type="submit" class="logout-btn">退出</button></form>
+  </div>
+</div>
+
 <!-- ===== 主界面：左侧边栏 + 内容区 ===== -->
 <div class="layout">
 
@@ -74,21 +102,21 @@
           {% endfor %}
         </select>
       </form>
-      <button type="button" class="icon-btn" onclick="openInstModal()" title="管理实例">⚙️</button>
+      <button type="button" class="icon-btn" onclick="openInstModal()" title="管理实例"><svg><use href="/static/icons.svg#i-instance"></use></svg></button>
     </div>
 
     <nav class="sidebar-nav">
-      <button class="nav-item active" data-tab="overview" onclick="switchTab('overview')"><span class="nav-icon">📊</span>概览</button>
-      <button class="nav-item" data-tab="tasks" onclick="switchTab('tasks')"><span class="nav-icon">🚀</span>任务</button>
-      <button class="nav-item" data-tab="config" onclick="switchTab('config')"><span class="nav-icon">⚙️</span>配置</button>
-      <button class="nav-item" data-tab="log" onclick="switchTab('log')"><span class="nav-icon">📝</span>日志</button>
+      <button class="nav-item active" data-tab="overview" onclick="switchTab('overview')"><span class="nav-icon"><svg><use href="/static/icons.svg#i-overview"></use></svg></span><span class="nav-label">概览</span></button>
+      <button class="nav-item" data-tab="tasks" onclick="switchTab('tasks')"><span class="nav-icon"><svg><use href="/static/icons.svg#i-tasks"></use></svg></span><span class="nav-label">任务</span></button>
+      <button class="nav-item" data-tab="config" onclick="switchTab('config')"><span class="nav-icon"><svg><use href="/static/icons.svg#i-config"></use></svg></span><span class="nav-label">配置</span></button>
+      <button class="nav-item" data-tab="log" onclick="switchTab('log')"><span class="nav-icon"><svg><use href="/static/icons.svg#i-log"></use></svg></span><span class="nav-label">日志</span></button>
     </nav>
 
     <div class="sidebar-bottom">
       <span class="status-badge" id="statusBadge" style="justify-content:center;"><span class="dot"></span><span class="status-text">检测中…</span></span>
       <div class="sidebar-bottom-row">
-        <button class="icon-btn" onclick="openSearch()" title="全局搜索（Ctrl+K）">🔍</button>
-        <button class="icon-btn" id="themeBtn" onclick="toggleTheme()" title="切换主题">🌙</button>
+        <button class="icon-btn" onclick="openSearch()" title="全局搜索（Ctrl+K）"><svg><use href="/static/icons.svg#i-search"></use></svg></button>
+        <button class="icon-btn keep-emoji" id="themeBtn" onclick="toggleTheme()" title="切换主题">🌙</button>
         <form method="post" style="display:inline;flex:1;">{{ csrf_field() }}<input type="hidden" name="action" value="logout"><button type="submit" class="logout-btn">退出</button></form>
       </div>
     </div>
@@ -100,9 +128,9 @@
 
     <!-- 移动端顶栏 -->
     <div class="mobile-topbar">
-      <button class="icon-btn" onclick="openSidebar()">☰</button>
-      <button class="icon-btn" onclick="openSearch()" title="全局搜索">🔍</button>
-      <button class="icon-btn" id="themeBtnM" onclick="toggleTheme()" title="切换主题">🎀</button>
+      <button class="icon-btn" onclick="openSidebar()"><svg><use href="/static/icons.svg#i-list"></use></svg></button>
+      <button class="icon-btn" onclick="openSearch()" title="全局搜索"><svg><use href="/static/icons.svg#i-search"></use></svg></button>
+      <button class="icon-btn keep-emoji" id="themeBtnM" onclick="toggleTheme()" title="切换主题">🎀</button>
       <span class="grad-text" style="font-weight:800;font-size:16px;">M7A WebUI</span>
       <span class="status-badge" id="statusBadgeM" style="margin-left:auto;"><span class="dot"></span><span class="status-text">检测中…</span></span>
     </div>
@@ -123,25 +151,34 @@
       </div>
     </div>
 
-    {% if msg %}<div class="msg ok">✅ {{ msg }}</div>{% endif %}
+    {% if msg %}<div class="msg ok">{{ msg }}</div>{% endif %}
     {% if err %}<div class="msg err">❌ {{ err }}</div>{% endif %}
 
     <!-- ===== 概览 ===== -->
     
     <div class="page active" id="panel-overview">
       <div class="page-head">
-        <div class="page-title"><span class="pt-icon">📊</span>概览</div>
+        <div class="page-title"><span class="pt-icon"><svg><use href="/static/icons.svg#i-overview"></use></svg></span>概览</div>
         <div class="page-desc">容器状态、快捷操作与基本信息</div>
       </div>
 
+      <!-- v1.25：Fluent 桌面端风格 banner（与桌面端首页一致的圆角插画区） -->
+      <div class="hero">
+        <div class="hero-in">
+          <div class="hero-title">三月七小助手</div>
+          <div class="hero-sub">March7thAssistant · Web 管理面板</div>
+        </div>
+        <div class="hero-badge">v{{ PANEL_VERSION }}</div>
+      </div>
+
       <div class="card">
-        <h2><span class="icon">📦</span> 容器状态 <button class="btn small gray" onclick="refreshStatus()" style="margin-left:auto;">刷新</button></h2>
+        <h2><span class="icon"><svg><use href="/static/icons.svg#i-container"></use></svg></span> 容器状态 <button class="btn small gray" onclick="refreshStatus()" style="margin-left:auto;">刷新</button></h2>
         <div class="codebox" id="statusBox">{{ st_status }}</div>
       </div>
 
       <!-- v1.19：游戏画面实时预览 -->
       <div class="card" id="previewCard">
-        <h2><span class="icon">🎮</span> 游戏画面 <span class="badge" id="pvBadge" style="background:var(--muted,#8a8f98);color:#fff;">未开启</span>
+        <h2><span class="icon"><svg><use href="/static/icons.svg#i-preview"></use></svg></span> 游戏画面 <span class="badge" id="pvBadge" style="background:var(--muted,#8a8f98);color:#fff;">未开启</span>
           <span style="margin-left:auto;display:flex;gap:6px;align-items:center;">
             <select id="pvRes" onchange="pvSetRes(this.value)" style="display:none;font-size:12px;padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:var(--card2);color:var(--text);">
               <option value="720p">720P 流畅</option>
@@ -151,7 +188,7 @@
               <option value="15">15帧</option>
               <option value="30">30帧</option>
             </select>
-            <button type="button" class="btn small gray" id="pvEnc" onclick="pvToggleEnc()" style="display:none;" title="H.264 极致档：更低延迟与码率（需服务器安装 ffmpeg）">⚡H.264</button>
+            <button type="button" class="btn small gray" id="pvEnc" onclick="pvToggleEnc()" style="display:none;" title="H.264 极致档：更低延迟与码率（需服务器安装 ffmpeg）"><svg class="bi"><use href="/static/icons.svg#i-bolt"></use></svg>H.264</button>
             <button class="btn small gray" id="pvFull" onclick="pvFullscreen()" style="display:none;">全屏</button>
             <button class="btn small" id="pvToggle" onclick="pvToggle()">开启预览</button>
           </span>
@@ -166,7 +203,7 @@
 
       <div class="card">
         
-        <h2><span class="icon">📈</span> 资源监控
+        <h2><span class="icon"><svg><use href="/static/icons.svg#i-monitor"></use></svg></span> 资源监控
           <span class="badge" id="monLiveBadge" style="background:var(--green,#22c55e);color:#fff;">实时</span>
           <span class="mon-range">
             <button type="button" class="btn small" data-range="1m" onclick="setMonRange('1m')">近1分钟</button>
@@ -185,7 +222,7 @@
             <option value="60"{{ (' selected' if _monIv == 60 else '') }}>60秒</option>
           </select>
           <button class="btn small gray" onclick="loadMonitor(true)" style="margin-left:8px;">立即刷新</button>
-          <button class="btn small gray" style="margin-left:6px;" onclick="exportData('monitor')" title="导出资源监控归档（CSV）">⬇️ 导出</button>
+          <button class="btn small gray" style="margin-left:6px;" onclick="exportData('monitor')" title="导出资源监控归档（CSV）"><svg class="bi"><use href="/static/icons.svg#i-export"></use></svg>导出</button>
         </h2>
         <div class="mon-custom" id="monCustomBox" style="display:none;">
           <input type="datetime-local" id="monFrom" class="mon-custom-in" aria-label="开始时间">
@@ -210,7 +247,7 @@
 
       <!-- v1.23：任务收益日报 -->
       <div class="card" id="outcomeCard">
-        <h2><span class="icon">🧾</span> 任务收益日报
+        <h2><span class="icon"><svg><use href="/static/icons.svg#i-report"></use></svg></span> 任务收益日报
           <span class="oc-range" style="margin-left:10px;">
             <button type="button" class="btn small active" data-days="7" onclick="setOutcomeDays(7)">近7天</button>
             <button type="button" class="btn small" data-days="14" onclick="setOutcomeDays(14)">近14天</button>
@@ -232,7 +269,7 @@
       <!-- v1.18：异常告警；v1.24：分级 / 静音 / 磁盘 / 晨报 / 上游更新 -->
       {% set _up = _upstream | default({}, true) %}
       <div class="card">
-        <h2><span class="icon">🚨</span> 异常告警
+        <h2><span class="icon"><svg><use href="/static/icons.svg#i-alert"></use></svg></span> 异常告警
           <span class="badge" id="alertBadge" style="background:var(--primary-soft);color:var(--primary);">{{ ('已启用' if ( not empty(alertVals['alert_enable'])  and  alertVals['alert_enable'] == '1') else '未启用') }}</span>
           <span class="badge" id="alertUpBadge" title="{{ _up.get('url') or '' }}" style="background:#fff4d6;color:#8a6d1f;{{ '' if _up.get('has_update') else 'display:none;' }}">本体有新版本{{ (' v' ~ _up.get('latest')) if _up.get('latest') else '' }}</span>
         </h2>
@@ -281,7 +318,7 @@
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="diskAlertEnable" style="width:18px;height:18px;"{{ (' checked' if ((alertVals['disk_alert_enable'] | default('1', true)) | string) == '1' else '') }}> 开启</label>
             <span>warn</span><input type="number" id="diskWarnPercent" class="cfg-input-text" style="width:76px;" min="1" max="99" value="{{ alertVals['disk_warn_percent'] | default(15, true) }}">%
             <span>critical</span><input type="number" id="diskCritPercent" class="cfg-input-text" style="width:76px;" min="1" max="99" value="{{ alertVals['disk_crit_percent'] | default(8, true) }}">%
-            <button type="button" class="btn small gray" onclick="checkDiskNow()">🧪 立即检查</button>
+            <button type="button" class="btn small gray" onclick="checkDiskNow()"><svg class="bi"><use href="/static/icons.svg#i-doctor"></use></svg>立即检查</button>
           </div>
         </div>
         <div class="cfg-row">
@@ -289,7 +326,7 @@
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:14px;">
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="morningReportEnable" style="width:18px;height:18px;"{{ (' checked' if ((alertVals['morning_report_enable'] | default('1', true)) | string) == '1' else '') }}> 开启</label>
             <span>发送时间</span><input type="time" id="morningReportTime" class="cfg-input-text" style="width:126px;" value="{{ alertVals['morning_report_time'] | default('08:00', true) }}">
-            <button type="button" class="btn small gray" onclick="morningReportNow()">📤 立即发送</button>
+            <button type="button" class="btn small gray" onclick="morningReportNow()"><svg class="bi"><use href="/static/icons.svg#i-send"></use></svg>立即发送</button>
           </div>
         </div>
         <div class="cfg-row">
@@ -297,16 +334,16 @@
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:14px;">
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="upstreamCheckEnable" style="width:18px;height:18px;"{{ (' checked' if ((alertVals['upstream_check_enable'] | default('1', true)) | string) == '1' else '') }}> 开启</label>
             <span style="color:var(--muted);">本机 {{ ('v' ~ _up.get('local')) if _up.get('local') else '未知' }}{{ (' ／ 上游 v' ~ _up.get('latest')) if _up.get('latest') else '' }}</span>
-            <button type="button" class="btn small gray" onclick="checkUpstreamNow()">🔄 立即检查</button>
+            <button type="button" class="btn small gray" onclick="checkUpstreamNow()"><svg class="bi"><use href="/static/icons.svg#i-sync"></use></svg>立即检查</button>
           </div>
         </div>
         <div class="btn-group">
-          <button type="button" class="btn green" id="alertSaveBtn" onclick="saveAlert()">💾 保存设置</button>
-          <button type="button" class="btn gray" id="alertTestBtn" onclick="testAlert()">📤 发送测试</button>
-          <button type="button" class="btn gray" onclick="testAlertLevel('warn')">📤 测试 warn</button>
-          <button type="button" class="btn gray" onclick="testAlertLevel('critical')">📤 测试 critical</button>
-          <button type="button" class="btn gray" onclick="toggleAlertHist()">📋 历史</button>
-          <button type="button" class="btn gray" onclick="exportData('alerts')" title="导出告警事件（CSV）">⬇️ 导出</button>
+          <button type="button" class="btn green" id="alertSaveBtn" onclick="saveAlert()"><svg class="bi"><use href="/static/icons.svg#i-save"></use></svg>保存设置</button>
+          <button type="button" class="btn gray" id="alertTestBtn" onclick="testAlert()"><svg class="bi"><use href="/static/icons.svg#i-send"></use></svg>发送测试</button>
+          <button type="button" class="btn gray" onclick="testAlertLevel('warn')"><svg class="bi"><use href="/static/icons.svg#i-send"></use></svg>测试 warn</button>
+          <button type="button" class="btn gray" onclick="testAlertLevel('critical')"><svg class="bi"><use href="/static/icons.svg#i-send"></use></svg>测试 critical</button>
+          <button type="button" class="btn gray" onclick="toggleAlertHist()"><svg class="bi"><use href="/static/icons.svg#i-history"></use></svg>历史</button>
+          <button type="button" class="btn gray" onclick="exportData('alerts')" title="导出告警事件（CSV）"><svg class="bi"><use href="/static/icons.svg#i-export"></use></svg>导出</button>
         </div>
         <div id="alertHistBox" style="display:none;margin-top:8px;max-height:240px;overflow:auto;border-top:1px dashed var(--border);padding-top:6px;"></div>
 
@@ -315,46 +352,46 @@
 
       <!-- v1.18：一键体检 -->
       <div class="card">
-        <h2><span class="icon">🩺</span> 一键体检
+        <h2><span class="icon"><svg><use href="/static/icons.svg#i-doctor"></use></svg></span> 一键体检
           <button type="button" class="btn small primary" id="doctorBtn" onclick="runDoctor()" style="margin-left:auto;">开始体检</button>
         </h2>
         <div class="doctor-box" id="doctorBox"><div class="doctor-item"><span class="d-ico">ℹ️</span><div class="d-msg">点击「开始体检」检查 Docker 权限、配置可写、推送配置、计划任务心跳、磁盘空间、镜像与面板版本等。</div></div></div>
       </div>
 
       <div class="card">
-        <h2><span class="icon">⚡</span> 快捷操作
-          <button type="button" class="btn small red" id="quickStopTask" onclick="stopCurrentTask()" style="margin-left:auto;opacity:.45;" title="随时停止正在运行的任务">⏹️ 停止任务</button>
-          <button type="button" class="btn small gray" onclick="stopAssistant()" style="margin-left:6px;" title="随时停止小助手容器，之后点重启容器或任意快捷操作即可恢复">⏸️ 停止小助手</button>
+        <h2><span class="icon"><svg><use href="/static/icons.svg#i-bolt"></use></svg></span> 快捷操作
+          <button type="button" class="btn small red" id="quickStopTask" onclick="stopCurrentTask()" style="margin-left:auto;opacity:.45;" title="随时停止正在运行的任务"><svg class="bi"><use href="/static/icons.svg#i-fail"></use></svg>停止任务</button>
+          <button type="button" class="btn small gray" onclick="stopAssistant()" style="margin-left:6px;" title="随时停止小助手容器，之后点重启容器或任意快捷操作即可恢复"><svg class="bi"><use href="/static/icons.svg#i-fail"></use></svg>停止小助手</button>
         </h2>
         <div class="btn-group">
           {% for key, t in TASKS.items() %}
-          <form method="post" style="display:inline;">{{ csrf_field() }}<input type="hidden" name="action" value="{{ key }}"><button type="submit" class="btn primary">{{ t['icon'] ~ ' ' ~ t['label'] }}</button></form>
+          <form method="post" style="display:inline;">{{ csrf_field() }}<input type="hidden" name="action" value="{{ key }}"><button type="submit" class="btn primary"><svg class="bi"><use href="/static/icons.svg#i-{{ TASK_IC.get(key, 'play') }}"></use></svg>{{ t['label'] }}</button></form>
           {% endfor %}
         </div>
       </div>
 
       <div class="card">
-        <h2><span class="icon">🚪</span> 任务结束后设置 <span class="badge" id="afterFinishBadge" style="background:{{ ('var(--green,#22c55e)' if afVal == 'Exit' else 'var(--gray,#9ca3af)') }};color:#fff;">{{ ('自动退出' if afVal == 'Exit' else '保持界面') }}</span></h2>
+        <h2><span class="icon"><svg><use href="/static/icons.svg#i-logout"></use></svg></span> 任务结束后设置 <span class="badge" id="afterFinishBadge" style="background:{{ ('var(--green,#22c55e)' if afVal == 'Exit' else 'var(--gray,#9ca3af)') }};color:#fff;">{{ ('自动退出' if afVal == 'Exit' else '保持界面') }}</span></h2>
         <div class="btn-group">
-          <button type="button" class="btn primary" onclick="setAfterFinish('Exit')">🚪 跑完自动退出游戏</button>
+          <button type="button" class="btn primary" onclick="setAfterFinish('Exit')"><svg class="bi"><use href="/static/icons.svg#i-logout"></use></svg>跑完自动退出游戏</button>
           <button type="button" class="btn gray" onclick="setAfterFinish('None')">🖥️ 跑完保持界面</button>
         </div>
         <p class="tip" style="margin:10px 0 0;">开启「自动退出」后任务全部跑完会自动退出游戏，下次进入从主界面开始，不再停在模拟宇宙界面。当前状态：<strong id="afterFinishVal">{{ ('跑完自动退出游戏' if afVal == 'Exit' else '跑完保持界面') }}</strong>，下次运行任务时生效。</p>
       </div>
 
       <div class="card">
-        <h2><span class="icon">📌</span> 基本信息</h2>
+        <h2><span class="icon"><svg><use href="/static/icons.svg#i-info"></use></svg></span> 基本信息</h2>
         <div class="info-grid">
           <div class="info-item"><div class="label">当前实例</div><div class="value">{{ instance_name() }}（{{ instance_container() }}）</div></div>
           <div class="info-item"><div class="label">项目目录</div><div class="value" style="font-size:13px;">{{ instance_dir() }}</div></div>
           <div class="info-item"><div class="label">容器名</div><div class="value">{{ instance_container() }}</div></div>
-          <div class="info-item"><div class="label">Config</div><div class="value" style="font-size:13px;">{{ ('✅ 存在' if is_file(instance_config()) else '❌ 不存在') }}</div></div>
+          <div class="info-item"><div class="label">Config</div><div class="value" style="font-size:13px;">{{ ('存在' if is_file(instance_config()) else '不存在') }}</div></div>
           <div class="info-item"><div class="label">最近日志</div><div class="value" style="font-size:13px;">{{ latest_log_name }}</div></div>
         </div>
       </div>
 
       <div class="card">
-        <h2><span class="icon">🔗</span> 管理面板更新 <button class="btn small gray" onclick="testUpdateSource()" style="margin-left:auto;">测试连接</button></h2>
+        <h2><span class="icon"><svg><use href="/static/icons.svg#i-update"></use></svg></span> 管理面板更新 <button class="btn small gray" onclick="testUpdateSource()" style="margin-left:auto;">测试连接</button></h2>
         <div class="info-grid">
           <div class="info-item"><div class="label">更新源类型</div><div class="value">{{ strtoupper(UPDATE_TYPE) }}</div></div>
           <div class="info-item"><div class="label">当前版本</div><div class="value">v{{ PANEL_VERSION }} (Python)</div></div>
@@ -370,7 +407,7 @@
 
       <div class="card">
         {% set bkList = backups_list() %}
-        <h2><span class="icon">🗂️</span> 版本备份 / 回滚
+        <h2><span class="icon"><svg><use href="/static/icons.svg#i-backup"></use></svg></span> 版本备份 / 回滚
           <span class="badge" style="background:var(--primary-soft);color:var(--primary);">保留最近 {{ (BACKUP_KEEP)|int }} 份</span>
         </h2>
         {% if  not bkList %}
@@ -396,25 +433,25 @@
       </div>
 
       <div class="card">
-        <h2><span class="icon">🐳</span> 三月七小助手镜像更新</h2>
+        <h2><span class="icon"><svg><use href="/static/icons.svg#i-image"></use></svg></span> 三月七小助手镜像更新</h2>
         <div class="info-grid">
           <div class="info-item"><div class="label">小助手镜像</div><div class="value" id="imgStatus">检测中…</div></div>
           <div class="info-item"><div class="label">镜像检查</div><div class="value"><button class="btn small gray" onclick="checkImage(true)">重新检查</button></div></div>
-          <div class="info-item"><div class="label">镜像更新</div><div class="value"><button class="btn small orange" onclick="updateAssistantImage()">⬆️ 更新镜像</button></div></div>
+          <div class="info-item"><div class="label">镜像更新</div><div class="value"><button class="btn small orange" onclick="updateAssistantImage()"><svg class="bi"><use href="/static/icons.svg#i-update"></use></svg>更新镜像</button></div></div>
         </div>
         <p class="tip" style="margin:10px 0 0;">对比本地镜像构建时间与 GitHub 最新提交，超过 1 小时提示更新；结果缓存 6 小时。更新镜像会自动依次尝试官方源与国内加速镜像（南大 / DaoCloud / dockerproxy），拉取成功后重建容器。</p>
       </div>
 
       <div class="card">
-        <h2><span class="icon">💾</span> 配置备份</h2>
+        <h2><span class="icon"><svg><use href="/static/icons.svg#i-save"></use></svg></span> 配置备份</h2>
         <div class="btn-group">
-          <a href="?download=config" class="btn primary">⬇️ 下载备份</a>
+          <a href="?download=config" class="btn primary"><svg class="bi"><use href="/static/icons.svg#i-download"></use></svg>下载备份</a>
         </div>
         <form method="post" enctype="multipart/form-data" style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           {{ csrf_field() }}
           <input type="hidden" name="action" value="restore_config">
           <input type="file" name="cfg_file" accept=".yaml,.yml" style="flex:1;font-size:13px;min-width:200px;">
-          <button type="submit" class="btn orange small" onclick="return confirm('恢复配置会用上传文件覆盖当前 config.yaml，确定？');">⬆️ 恢复配置</button>
+          <button type="submit" class="btn orange small" onclick="return confirm('恢复配置会用上传文件覆盖当前 config.yaml，确定？');"><svg class="bi"><use href="/static/icons.svg#i-backup"></use></svg>恢复配置</button>
         </form>
         <p class="tip" style="margin:10px 0 0;">下载备份可把配置导出到本地保存；恢复前会自动备份当前文件，恢复后需重启容器生效。</p>
       </div>
@@ -423,16 +460,16 @@
     <!-- ===== 任务 ===== -->
     <div class="page" id="panel-tasks">
       <div class="page-head">
-        <div class="page-title"><span class="pt-icon">🚀</span>任务</div>
+        <div class="page-title"><span class="pt-icon"><svg><use href="/static/icons.svg#i-tasks"></use></svg></span>任务</div>
         <div class="page-desc">在容器内后台执行，启动后可切到「日志」页查看进度</div>
       </div>
 
       <div class="card">
-        <h2><span class="icon">🎮</span> 执行任务</h2>
+        <h2><span class="icon"><svg><use href="/static/icons.svg#i-tasks"></use></svg></span> 执行任务</h2>
         <div class="task-grid">
           {% for key, t in TASKS.items() %}
           <div class="task-card">
-            <div class="icon">{{ t['icon'] }}</div>
+            <div class="icon"><svg><use href="/static/icons.svg#i-{{ TASK_IC.get(key, 'play') }}"></use></svg></div>
             <div class="label">{{ t['label'] }}</div>
             <div class="desc">{{ t['desc'] }}</div>
             <form method="post">{{ csrf_field() }}<input type="hidden" name="action" value="{{ key }}"><button type="submit" class="btn primary small">执行</button></form>
@@ -443,10 +480,10 @@
 
       <div class="card">
         
-        <h2><span class="icon">🕒</span> 任务历史
+        <h2><span class="icon"><svg><use href="/static/icons.svg#i-history"></use></svg></span> 任务历史
           <span class="badge" id="histStat" style="background:var(--primary-soft);color:var(--primary);">今日执行 {{ (histToday['count'])|int }} 次 · 成功 {{ (histToday['ok'])|int }} 次</span>
-          <button class="btn small gray" style="margin-left:auto;" onclick="exportData('history')" title="导出任务历史（CSV）">⬇️ 导出</button>
-          <button class="btn small gray" onclick="clearHistory()">🗑️ 清空历史</button>
+          <button class="btn small gray" style="margin-left:auto;" onclick="exportData('history')" title="导出任务历史（CSV）"><svg class="bi"><use href="/static/icons.svg#i-export"></use></svg>导出</button>
+          <button class="btn small gray" onclick="clearHistory()"><svg class="bi"><use href="/static/icons.svg#i-del"></use></svg>清空历史</button>
         </h2>
         <div class="oc-stats" id="taskStats"></div>
         <div class="hist-week" id="histWeek"></div>
@@ -462,7 +499,7 @@
                 <td data-label="开始时间">{{ hi['start_str'] }}</td>
                 <td data-label="耗时">{{ hi['duration_str'] }}</td>
                 <td data-label="状态"><span class="hist-badge" style="background:{{ hi['status_color'] }};">{{ hi['status_label'] }}</span></td>
-                <td data-label="操作" style="text-align:right;"><button type="button" class="btn small gray" onclick="histViewLog()">📝 查看日志</button></td>
+                <td data-label="操作" style="text-align:right;"><button type="button" class="btn small gray" onclick="histViewLog()"><svg class="bi"><use href="/static/icons.svg#i-log"></use></svg>查看日志</button></td>
               </tr>
               {% endfor %}{% endif %}
             </tbody>
@@ -474,7 +511,7 @@
       <!-- v1.15+：计划任务（由宿主机 cron 每分钟调用面板触发，不依赖程序常驻） -->
       <div class="card">
         
-        <h2><span class="icon">⏰</span> 计划任务
+        <h2><span class="icon"><svg><use href="/static/icons.svg#i-schedule"></use></svg></span> 计划任务
           <span class="badge" style="background:var(--primary-soft);color:var(--primary);">共 {{ count(schedData['tasks']) }} 条 · 启用 {{ schedEnabled }} 条</span>
           <form method="post" style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;">
             {{ csrf_field() }}
@@ -488,8 +525,8 @@
         </h2>
 
         <div class="sched-cal-bar">
-          <button type="button" class="sched-cal-tab active" id="schedViewTable" onclick="setSchedView('table')">📋 表格</button>
-          <button type="button" class="sched-cal-tab" id="schedViewCal" onclick="setSchedView('cal')">🗓 日历</button>
+          <button type="button" class="sched-cal-tab active" id="schedViewTable" onclick="setSchedView('table')"><svg class="bi"><use href="/static/icons.svg#i-list"></use></svg>表格</button>
+          <button type="button" class="sched-cal-tab" id="schedViewCal" onclick="setSchedView('cal')"><svg class="bi"><use href="/static/icons.svg#i-calendar"></use></svg>日历</button>
         </div>
         <script type="application/json" id="schedDataJson">{{ json_encode(schedData['tasks']) | safe }}</script>
 
@@ -518,7 +555,7 @@
                     {{ csrf_field() }}
                     <input type="hidden" name="sched_id" value="{{ st['id'] }}">
                     <button type="submit" class="btn small {{ ('gray' if not empty(st['enabled']) else 'green') }}" name="action" value="schedule_toggle">{{ ('⏸ 停用' if not empty(st['enabled']) else '▶ 启用') }}</button>
-                    <button type="submit" class="btn small red" name="action" value="schedule_del" onclick="return confirm('删除计划任务「{{ (st['name'] if st['name'] != '' else st['id']) }}」？');">🗑 删除</button>
+                    <button type="submit" class="btn small red" name="action" value="schedule_del" onclick="return confirm('删除计划任务「{{ (st['name'] if st['name'] != '' else st['id']) }}」？');"><svg class="bi"><use href="/static/icons.svg#i-del"></use></svg>删除</button>
                   </form>
                 </td>
               </tr>
@@ -553,10 +590,10 @@
             <label>任务</label>
             <select name="sched_args" class="cfg-select">
               {% for key, t in TASKS.items() %}
-              <option value="{{ key }}">{{ t['icon'] ~ ' ' ~ t['label'] }}</option>
+              <option value="{{ key }}">{{ t['label'] }}</option>
               {% endfor %}
             </select>
-            <button type="submit" class="btn primary small" name="action" value="schedule_add">➕ 添加计划任务</button>
+            <button type="submit" class="btn primary small" name="action" value="schedule_add"><svg class="bi"><use href="/static/icons.svg#i-add"></use></svg>添加计划任务</button>
             <button type="submit" class="btn orange small" name="action" value="schedule_now" formnovalidate>▶️ 立即运行一次</button>
           </div>
         </form>
@@ -568,16 +605,16 @@
         </p>
         <div class="sched-cmd-row">
           <code id="schedCronCmd" class="sched-cmd">{{ _schedCron }}</code>
-          <button type="button" class="btn small gray" onclick="copyText('schedCronCmd', this)">📋 复制</button>
+          <button type="button" class="btn small gray" onclick="copyText('schedCronCmd', this)"><svg class="bi"><use href="/static/icons.svg#i-copy"></use></svg>复制</button>
         </div>
         <p class="tip" style="margin:8px 0 0;"><span style="color:var(--muted);font-size:12px;">提示：命令里的地址会自动取你当前访问面板的地址；如果服务器实际 IP 与此不同（例如用域名访问、内网/外网 IP 不一致），请把命令里的地址改成实际能访问面板的地址。命令带 key 校验，没有 key 的请求会被直接拒绝，建议面板本身也放在内网或加访问密码保护。</span></p>
       </div>
 
       <div class="card">
-        <h2><span class="icon">🔧</span> 容器操作</h2>
+        <h2><span class="icon"><svg><use href="/static/icons.svg#i-ops"></use></svg></span> 容器操作</h2>
         <div class="btn-group">
           {% for key, op in OPS.items() %}
-          <form method="post" style="display:inline;" onsubmit="return confirm('{{ op['confirm'] }}');">{{ csrf_field() }}<input type="hidden" name="action" value="{{ key }}"><button type="submit" class="btn {{ (op['color'] | default('primary', true)) }}">{{ op['icon'] ~ ' ' ~ op['label'] }}</button></form>
+          <form method="post" style="display:inline;" onsubmit="return confirm('{{ op['confirm'] }}');">{{ csrf_field() }}<input type="hidden" name="action" value="{{ key }}"><button type="submit" class="btn {{ (op['color'] | default('primary', true)) }}"><svg class="bi"><use href="/static/icons.svg#i-{{ OPS_IC.get(key, 'ops') }}"></use></svg>{{ op['label'] }}</button></form>
           {% endfor %}
         </div>
       </div>
@@ -586,16 +623,16 @@
     <!-- ===== 配置 ===== -->
     <div class="page" id="panel-config">
       <div class="page-head">
-        <div class="page-title"><span class="pt-icon">⚙️</span>配置</div>
+        <div class="page-title"><span class="pt-icon"><svg><use href="/static/icons.svg#i-config"></use></svg></span>配置</div>
         <div class="page-desc">图形化或文本方式编辑 config.yaml</div>
       </div>
 
       <div class="card">
-        <h2><span class="icon">⚙️</span> 配置管理</h2>
+        <h2><span class="icon"><svg><use href="/static/icons.svg#i-config"></use></svg></span> 配置管理</h2>
 
         <div class="cfg-tabs">
-          <button class="cfg-tab active" onclick="switchCfgTab('form')">📋 图形化编辑</button>
-          <button class="cfg-tab" onclick="switchCfgTab('text')">📝 文本编辑</button>
+          <button class="cfg-tab active" onclick="switchCfgTab('form')"><svg class="bi"><use href="/static/icons.svg#i-list"></use></svg>图形化编辑</button>
+          <button class="cfg-tab" onclick="switchCfgTab('text')"><svg class="bi"><use href="/static/icons.svg#i-edit"></use></svg>文本编辑</button>
         </div>
 
         <!-- 图形化表单 -->
@@ -609,11 +646,11 @@
               {% if gCollapsed %}
               <h3 class="cfg-toggle" onclick="toggleCfgGroup('{{ gKey }}')">
                 <span class="cfg-caret">▾</span>
-                {{ g['icon'] ~ ' ' ~ g['title'] }}
+                <span class="g-ic"><svg><use href="/static/icons.svg#i-{{ GRP_IC.get(gKey, 'config') }}"></use></svg></span>{{ g['title'] }}
                 <span class="cfg-hint"></span>
               </h3>
               {% else %}
-              <h3>{{ g['icon'] ~ ' ' ~ g['title'] }}</h3>
+              <h3><span class="g-ic"><svg><use href="/static/icons.svg#i-{{ GRP_IC.get(gKey, 'config') }}"></use></svg></span>{{ g['title'] }}</h3>
               {% endif %}
               {% if  not empty(g['note']) %}
               <p class="cfg-note">{{ g['note'] }}</p>
@@ -656,12 +693,12 @@
             {% endfor %}
 
             <div class="btn-group" style="margin-top:16px;">
-              <button type="submit" class="btn green">💾 保存配置</button>
-              <button type="button" class="btn orange" onclick="restartAfterSave()">💾 保存并重启容器</button>
-              <button type="submit" class="btn blue" name="then_notify_test" value="1">🔔 保存并发送测试推送</button>
-              <button type="submit" class="btn green" name="then_notify_check" value="1">🔍 保存并体检</button>
+              <button type="submit" class="btn green"><svg class="bi"><use href="/static/icons.svg#i-save"></use></svg>保存配置</button>
+              <button type="button" class="btn orange" onclick="restartAfterSave()"><svg class="bi"><use href="/static/icons.svg#i-save"></use></svg>保存并重启容器</button>
+              <button type="submit" class="btn blue" name="then_notify_test" value="1"><svg class="bi"><use href="/static/icons.svg#i-alert"></use></svg>保存并发送测试推送</button>
+              <button type="submit" class="btn green" name="then_notify_check" value="1"><svg class="bi"><use href="/static/icons.svg#i-search"></use></svg>保存并体检</button>
             </div>
-            <p class="cfg-footnote">提示：「🔔 保存并发送测试推送」会先保存本页配置，再向小助手发一条测试通知，用于验证推送渠道是否配通（结果看任务历史或日志）。「🔍 保存并体检」同样先保存本页配置，然后只做只读检查：告诉你哪些渠道真正会发出去、哪些启用了却缺必填项，结果直接显示在「消息推送」分组上方（不会发送任何消息）。</p>
+            <p class="cfg-footnote">提示：「保存并发送测试推送」会先保存本页配置，再向小助手发一条测试通知，用于验证推送渠道是否配通（结果看任务历史或日志）。「保存并体检」同样先保存本页配置，然后只做只读检查：告诉你哪些渠道真正会发出去、哪些启用了却缺必填项，结果直接显示在「消息推送」分组上方（不会发送任何消息）。</p>
           </form>
         </div>
 
@@ -673,8 +710,8 @@
             <p class="tip" style="margin-bottom:10px;">直接编辑完整 YAML，保存前会自动备份。修改后需重启容器生效。</p>
             <textarea name="yaml_content" class="yaml-editor" id="yamlEditor" spellcheck="false">{{ raw_cfg if raw_cfg is not none else '' }}</textarea>
             <div class="btn-group" style="margin-top:12px;">
-              <button type="submit" class="btn green">💾 保存</button>
-              <button type="button" class="btn" style="background:#94a3b8;" onclick="reloadYaml()">🔄 重新加载</button>
+              <button type="submit" class="btn green"><svg class="bi"><use href="/static/icons.svg#i-save"></use></svg>保存</button>
+              <button type="button" class="btn" style="background:#94a3b8;" onclick="reloadYaml()"><svg class="bi"><use href="/static/icons.svg#i-sync"></use></svg>重新加载</button>
             </div>
           </form>
         </div>
@@ -689,13 +726,13 @@
     <!-- ===== 日志 ===== -->
     <div class="page" id="panel-log">
       <div class="page-head">
-        <div class="page-title"><span class="pt-icon">📝</span>日志</div>
+        <div class="page-title"><span class="pt-icon"><svg><use href="/static/icons.svg#i-log"></use></svg></span>日志</div>
         <div class="page-desc">关键词搜索 · 级别/时间过滤 · 一键导出</div>
       </div>
 
       <div class="card">
         <div class="log-header">
-          <h2 style="margin-bottom:0;"><span class="icon">📝</span> 运行日志</h2>
+          <h2 style="margin-bottom:0;"><span class="icon"><svg><use href="/static/icons.svg#i-log"></use></svg></span> 运行日志</h2>
           <div class="auto-refresh">
             <label><input type="checkbox" id="autoRefresh" checked onchange="toggleAutoRefresh()"> 自动刷新</label>
             <select id="refreshInterval" onchange="updateRefreshInterval()" style="padding:4px 8px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:var(--card-solid);color:var(--text);">
@@ -708,7 +745,7 @@
           </div>
         </div>
         <div class="log-filter">
-          <input type="text" id="logKeyword" placeholder="🔍 搜索关键词（回车立即过滤）" onkeyup="logKeywordKeyup(event)">
+          <input type="text" id="logKeyword" placeholder="搜索关键词（回车立即过滤）" onkeyup="logKeywordKeyup(event)">
           <select id="logLevel" onchange="refreshLog()">
             <option value="">全部级别</option>
             <option value="DEBUG">DEBUG</option>
@@ -723,14 +760,14 @@
             <option value="24">最近 24 小时</option>
           </select>
           <select id="logFile" onchange="refreshLog()"><option value="">加载中…</option></select>
-          <button class="btn small primary" id="exportLogBtn">⬇ 导出</button>
+          <button class="btn small primary" id="exportLogBtn"><svg class="bi"><use href="/static/icons.svg#i-export"></use></svg>导出</button>
           <button class="btn small gray" onclick="resetLogFilter()">↻ 重置</button>
         </div>
         <div class="log-count" id="logCount" style="margin-bottom:8px;"></div>
         <div class="log-tools">
           <label><input type="checkbox" id="logFollow" checked> 自动跟随</label>
           <button type="button" onclick="logJumpBottom()">⤓ 到底</button>
-          <button type="button" onclick="copyLogText()">📋 复制</button>
+          <button type="button" onclick="copyLogText()"><svg class="bi"><use href="/static/icons.svg#i-copy"></use></svg>复制</button>
         </div>
         <div class="codebox" id="logBox" style="max-height:600px;"><div style="color:var(--muted);">日志加载中…</div></div>
       </div>
@@ -775,56 +812,56 @@
           <div class="inst-form-row"><label>项目目录</label><input type="text" name="inst_dir" id="inst_dir" class="cfg-input-text" placeholder="如：/home/march7thassistant"></div>
           <div class="inst-form-row"><label><input type="checkbox" name="inst_default" id="inst_default" value="1"> 设为默认实例</label></div>
           <div class="btn-group">
-            <button type="submit" class="btn green">💾 保存实例</button>
+            <button type="submit" class="btn green"><svg class="bi"><use href="/static/icons.svg#i-save"></use></svg>保存实例</button>
             <button type="button" class="btn gray" onclick="hideInstForm()">取消</button>
           </div>
         </form>
       </div>
 
-      <button type="button" class="btn primary small" onclick="newInst()" style="margin-top:12px;">➕ 新增实例</button>
+      <button type="button" class="btn primary small" onclick="newInst()" style="margin-top:12px;"><svg class="bi"><use href="/static/icons.svg#i-add"></use></svg>新增实例</button>
     </div>
   </div>
 </div>
 
 <!-- v1.17：移动端胶囊悬浮导航 + 中央快捷键（≤640 显示） -->
 <nav class="mobile-tabbar" aria-label="页面导航">
-  <button type="button" class="tab-item active" data-tab="overview" onclick="switchTab('overview')"><span class="tab-icon">📊</span><span class="tab-text">概览</span></button>
-  <button type="button" class="tab-item" data-tab="tasks" onclick="switchTab('tasks')"><span class="tab-icon">🚀</span><span class="tab-text">任务</span></button>
+  <button type="button" class="tab-item active" data-tab="overview" onclick="switchTab('overview')"><span class="tab-icon"><svg><use href="/static/icons.svg#i-overview"></use></svg></span><span class="tab-text">概览</span></button>
+  <button type="button" class="tab-item" data-tab="tasks" onclick="switchTab('tasks')"><span class="tab-icon"><svg><use href="/static/icons.svg#i-tasks"></use></svg></span><span class="tab-text">任务</span></button>
   <div class="tab-fab-slot">
     <button type="button" class="tab-fab" id="tabFab" aria-label="容器快捷启停" title="状态检测中…"
       onclick="fabTap()" ontouchstart="fabLongPressStart()" ontouchend="fabLongPressCancel()"
       ontouchmove="fabLongPressCancel()" onmousedown="fabLongPressStart()" onmouseup="fabLongPressCancel()"
       onmouseleave="fabLongPressCancel()" oncontextmenu="return false;"><span id="fabIcon">⏳</span></button>
   </div>
-  <button type="button" class="tab-item" data-tab="log" onclick="switchTab('log')"><span class="tab-icon">📝</span><span class="tab-text">日志</span></button>
-  <button type="button" class="tab-item" data-tab="config" onclick="switchTab('config')"><span class="tab-icon">⚙️</span><span class="tab-text">配置</span></button>
+  <button type="button" class="tab-item" data-tab="log" onclick="switchTab('log')"><span class="tab-icon"><svg><use href="/static/icons.svg#i-log"></use></svg></span><span class="tab-text">日志</span></button>
+  <button type="button" class="tab-item" data-tab="config" onclick="switchTab('config')"><span class="tab-icon"><svg><use href="/static/icons.svg#i-config"></use></svg></span><span class="tab-text">配置</span></button>
 </nav>
-<button type="button" class="backtop" id="backTop" onclick="backToTop()" aria-label="回到顶部">⬆️</button>
+<button type="button" class="backtop" id="backTop" onclick="backToTop()" aria-label="回到顶部"><svg class="bi"><use href="/static/icons.svg#i-chevron"></use></svg></button>
 <!-- v1.18：运行中任务悬浮条 -->
 <div class="runbar" id="runBar">
   <span class="rb-dot"></span>
   <span class="rb-label" id="rbLabel">运行中</span>
   <span class="rb-time" id="rbTime">00:00</span>
   <span class="rb-acts">
-    <button type="button" class="rb-btn" onclick="switchTab('log')">📝 日志</button>
+    <button type="button" class="rb-btn" onclick="switchTab('log')"><svg class="bi"><use href="/static/icons.svg#i-log"></use></svg>日志</button>
     <button type="button" class="rb-btn rb-stop" onclick="runbarStop()">⏹ 停止</button>
   </span>
 </div>
 <div class="sheet-overlay" id="fabSheetOverlay" onclick="closeFabSheet()">
   <div class="sheet" role="menu" onclick="event.stopPropagation()">
     <div class="sheet-title">容器快捷操作</div>
-    <button type="button" class="sheet-item" onclick="fabAct('restart')">🔄 重启容器<span class="sheet-sub">docker compose restart，恢复运行 / 应用新配置</span></button>
-    <button type="button" class="sheet-item" onclick="fabAct('stop')">⏸️ 停止容器<span class="sheet-sub">任务将全部中断，之后可点中央按钮恢复</span></button>
-    <button type="button" class="sheet-item" onclick="closeFabSheet();doUpdate();">⬆️ 更新镜像<span class="sheet-sub">拉取小助手最新版并重建容器</span></button>
+    <button type="button" class="sheet-item" onclick="fabAct('restart')"><svg class="bi"><use href="/static/icons.svg#i-restart"></use></svg>重启容器<span class="sheet-sub">docker compose restart，恢复运行 / 应用新配置</span></button>
+    <button type="button" class="sheet-item" onclick="fabAct('stop')"><svg class="bi"><use href="/static/icons.svg#i-fail"></use></svg>停止容器<span class="sheet-sub">任务将全部中断，之后可点中央按钮恢复</span></button>
+    <button type="button" class="sheet-item" onclick="closeFabSheet();doUpdate();"><svg class="bi"><use href="/static/icons.svg#i-update"></use></svg>更新镜像<span class="sheet-sub">拉取小助手最新版并重建容器</span></button>
     <button type="button" class="sheet-cancel" onclick="closeFabSheet()">取消</button>
   </div>
 </div>
 <!-- v1.18：点按中央键 → 快速跑任务菜单 -->
 <div class="sheet-overlay" id="taskSheetOverlay" onclick="closeTaskSheet()">
   <div class="sheet" role="menu" onclick="event.stopPropagation()">
-    <div class="sheet-title">🚀 快速跑任务</div>
+    <div class="sheet-title">快速跑任务</div>
     {% for key, t in TASKS.items() %}
-    <button type="button" class="sheet-item" onclick="quickTask('{{ key }}', '{{ t['label'] }}')">{{ t['icon'] ~ ' ' ~ t['label'] }}<span class="sheet-sub">{{ t['desc'] }}</span></button>
+    <button type="button" class="sheet-item" onclick="quickTask('{{ key }}', '{{ t['label'] }}')"><svg class="bi"><use href="/static/icons.svg#i-{{ TASK_IC.get(key, 'play') }}"></use></svg>{{ t['label'] }}<span class="sheet-sub">{{ t['desc'] }}</span></button>
     {% endfor %}
     <button type="button" class="sheet-cancel" onclick="closeTaskSheet()">取消</button>
   </div>
@@ -832,7 +869,7 @@
 <!-- v1.18：全局搜索 -->
 <div class="search-overlay" id="searchOverlay" onclick="closeSearch()">
   <div class="search-panel" onclick="event.stopPropagation()">
-    <div class="search-bar"><span style="opacity:.7;">🔍</span><input type="text" id="searchInput" placeholder="搜任务 / 配置项 / 页面 / 操作，回车跳转，Esc 关闭" autocomplete="off"></div>
+    <div class="search-bar"><span style="opacity:.7;"><svg class="bi"><use href="/static/icons.svg#i-search"></use></svg></span><input type="text" id="searchInput" placeholder="搜任务 / 配置项 / 页面 / 操作，回车跳转，Esc 关闭" autocomplete="off"></div>
     <div class="search-results" id="searchResults"></div>
   </div>
 </div>

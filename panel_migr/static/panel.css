@@ -1112,3 +1112,537 @@ table.sched-table tr.sched-cal-hl { animation:schedRowHl 2.2s ease-out; }
   .oc-day { display:none; }
   .oc-stat-name { width:64px; }
 }
+
+/* ============================================================
+   V1.25 Fluent 皮肤层（增量覆盖，不改动上方任何功能样式）
+   视觉来源：March7thAssistant 桌面端（PyQt-Fluent-Widgets 1.11.2）
+   关键实测值：主色 #f18cb9 / 导航栏 72px / 按钮 64×58 / 图标 20×20 @ (22,13)
+              / 选中块圆角 5px / 指示条 4×24 圆角 2 / 卡片圆角 10px(6px 行)
+              / 开关 42×22 滑点 12px（左 5 / 25）/ 标题栏 48px
+   ============================================================ */
+
+/* ---------- 1. 设计令牌 ---------- */
+:root, html[data-theme="march7"] {
+  --bg:#f7f9fc; --card:#fcfdfe; --card2:#f3f6fa; --card-solid:#ffffff;
+  --text:#1a1a1a; --muted:#5a5a5a;
+  --primary:#f18cb9; --primary-2:#e0709f; --primary-soft:#fdeef5;
+  --green:#0f7b0f; --green-bg:#dff6dd; --red:#c42b1c; --red-bg:#fde7e9;
+  --orange:#9d5d00; --orange-bg:#fff4ce; --blue:#0f6cbd;
+  --border:rgba(0,0,0,.0578); --shadow:0 1px 2px rgba(0,0,0,.045); --radius:10px;
+  --grad:linear-gradient(135deg,#f18cb9 0%,#f5a8c9 100%);
+  --grad-soft:rgba(241,140,185,.13);
+  --glass-bg:#fcfdfe; --glass-bg-soft:#f3f6fa; --glass-blur:none; --glass-blur-sm:none;
+  --glass-border:rgba(0,0,0,.0578); --glass-highlight:none;
+  --glass-shadow:0 1px 2px rgba(0,0,0,.045);
+  --glass-glow:0 4px 14px rgba(0,0,0,.085);
+  --glass-edge-hover:rgba(241,140,185,.62); --glass-sheen:transparent;
+  --glass-row-hover:rgba(0,0,0,.024);
+  --glass-radius:10px; --glass-radius-sm:6px;
+  --blob-a:transparent; --blob-b:transparent; --blob-c:transparent; --blob-opacity:0;
+  --nav-bg:#f0f4f9; --win-bg:#f7f9fc; --line:rgba(0,0,0,.0578);
+  --hover:rgba(0,0,0,.035); --switch-off:rgba(0,0,0,.522);
+}
+html[data-theme="light"] {
+  --bg:#f7f9fc; --card:#fcfdfe; --card2:#f3f6fa; --card-solid:#ffffff;
+  --text:#1a1a1a; --muted:#5a5a5a;
+  --primary:#0f6cbd; --primary-2:#115ea3; --primary-soft:#ebf3fc;
+  --green:#0f7b0f; --green-bg:#dff6dd; --red:#c42b1c; --red-bg:#fde7e9;
+  --orange:#9d5d00; --orange-bg:#fff4ce;
+  --border:rgba(0,0,0,.0578); --shadow:0 1px 2px rgba(0,0,0,.045); --radius:10px;
+  --grad:linear-gradient(135deg,#0f6cbd 0%,#2899f5 100%);
+  --grad-soft:rgba(15,108,189,.12);
+  --glass-bg:#fcfdfe; --glass-bg-soft:#f3f6fa; --glass-blur:none; --glass-blur-sm:none;
+  --glass-border:rgba(0,0,0,.0578); --glass-highlight:none;
+  --glass-shadow:0 1px 2px rgba(0,0,0,.045);
+  --glass-glow:0 4px 14px rgba(0,0,0,.085);
+  --glass-edge-hover:rgba(15,108,189,.55); --glass-sheen:transparent;
+  --glass-row-hover:rgba(0,0,0,.024);
+  --glass-radius:10px; --glass-radius-sm:6px;
+  --blob-a:transparent; --blob-b:transparent; --blob-c:transparent; --blob-opacity:0;
+  --nav-bg:#f0f4f9; --win-bg:#f7f9fc; --line:rgba(0,0,0,.0578);
+  --hover:rgba(0,0,0,.035); --switch-off:rgba(0,0,0,.522);
+}
+html[data-theme="dark"] {
+  --bg:#202020; --card:#2b2b2b; --card2:#323232; --card-solid:#2b2b2b;
+  --text:#f2f2f2; --muted:#b4b4b4;
+  --primary:#f18cb9; --primary-2:#e0709f; --primary-soft:#3a2630;
+  --green:#6ccb5f; --green-bg:#1d331b; --red:#ff99a4; --red-bg:#442726;
+  --orange:#fce100; --orange-bg:#433519; --blue:#60cdff;
+  --border:rgba(255,255,255,.0937); --shadow:0 1px 2px rgba(0,0,0,.28); --radius:10px;
+  --grad:linear-gradient(135deg,#f18cb9 0%,#f5a8c9 100%);
+  --grad-soft:rgba(241,140,185,.16);
+  --glass-bg:#2b2b2b; --glass-bg-soft:#323232; --glass-blur:none; --glass-blur-sm:none;
+  --glass-border:rgba(255,255,255,.0937); --glass-highlight:none;
+  --glass-shadow:0 1px 2px rgba(0,0,0,.28);
+  --glass-glow:0 4px 14px rgba(0,0,0,.42);
+  --glass-edge-hover:rgba(241,140,185,.55); --glass-sheen:transparent;
+  --glass-row-hover:rgba(255,255,255,.055);
+  --glass-radius:10px; --glass-radius-sm:6px;
+  --blob-a:transparent; --blob-b:transparent; --blob-c:transparent; --blob-opacity:0;
+  --nav-bg:#272727; --win-bg:#202020; --line:rgba(255,255,255,.0937);
+  --hover:rgba(255,255,255,.06); --switch-off:rgba(255,255,255,.5442);
+}
+
+/* ---------- 2. 画布：Fluent 无光斑，纯平底色 ---------- */
+body, html[data-theme="light"] body, html[data-theme="dark"] body {
+  background:var(--win-bg);
+  background-attachment:scroll;
+  font-family:"Segoe UI","Microsoft YaHei","PingFang SC","Noto Sans SC",-apple-system,BlinkMacSystemFont,sans-serif;
+  font-size:14px;
+}
+.bg-layer { display:none !important; }
+.grad-text { background:none; -webkit-text-fill-color:currentColor; color:var(--text); }
+a { color:var(--primary); }
+
+/* ---------- 3. 标题栏（48px，新增外壳） ---------- */
+.titlebar {
+  height:48px; flex:none; display:flex; align-items:center; gap:12px;
+  padding:0 14px 0 16px; background:var(--nav-bg);
+  border-bottom:1px solid var(--line); position:sticky; top:0; z-index:300;
+  user-select:none;
+}
+.tb-logo { width:18px; height:18px; flex:none; border-radius:4px; object-fit:cover; }
+.tb-title { font-size:13px; font-weight:600; color:var(--text); white-space:nowrap; }
+.tb-sub { font-size:11.5px; color:var(--muted); white-space:nowrap; }
+.tb-mid { flex:1; min-width:0; display:flex; align-items:center; gap:8px; justify-content:center; }
+.tb-right { display:flex; align-items:center; gap:6px; flex:none; }
+.titlebar .inst-select {
+  min-width:0; width:auto; max-width:260px; height:30px; padding:0 26px 0 10px;
+  border:1px solid var(--line); border-radius:5px; background:var(--card-solid);
+  color:var(--text); font-size:12.5px; font-family:inherit;
+  background-image:none; appearance:none; -webkit-appearance:none;
+  box-shadow:0 1px 1px rgba(0,0,0,.03);
+}
+.titlebar .inst-select:hover { background:var(--card2); }
+.titlebar .icon-btn { width:32px; height:32px; border-radius:5px; border:1px solid transparent; background:transparent; }
+.titlebar .icon-btn:hover { background:var(--hover); border-color:transparent; }
+.titlebar .status-badge { padding:4px 10px; font-size:11.5px; border-radius:4px; background:var(--card-solid); border:1px solid var(--line); box-shadow:none; }
+.titlebar .logout-btn {
+  height:30px; padding:0 12px; border-radius:5px; font-size:12.5px; font-weight:400;
+  background:var(--card-solid); color:var(--text); border:1px solid var(--line);
+  box-shadow:0 1px 1px rgba(0,0,0,.03);
+}
+.titlebar .logout-btn:hover { background:var(--card2); transform:none; box-shadow:0 1px 1px rgba(0,0,0,.03); }
+
+/* ---------- 4. 布局骨架（window 滚动 + sticky 外壳，兼容 panel.js 的 scrollY 语义） ---------- */
+html, body { height:auto; }
+body { margin:0; overflow-x:hidden; }
+.layout {
+  display:flex; align-items:flex-start; min-height:calc(100vh - 48px);
+  gap:0; max-width:none; margin:0; padding:0;
+}
+.content {
+  flex:1; min-width:0; max-width:1240px;
+  padding:0 36px 48px; margin:0 auto;
+  overflow:visible; height:auto;
+}
+
+/* ---------- 5. 左侧导航栏（72px Fluent 图标栏，sticky） ---------- */
+.sidebar {
+  width:72px; flex:0 0 72px; height:calc(100vh - 48px);
+  position:sticky; top:48px; align-self:flex-start;
+  background:var(--nav-bg); border-right:1px solid var(--line);
+  box-shadow:none; backdrop-filter:none; -webkit-backdrop-filter:none;
+  display:flex; flex-direction:column; z-index:200;
+  padding:0; margin:0;
+}
+html[data-theme="dark"] .sidebar { background:var(--nav-bg); }
+.sidebar-nav {
+  flex:1; padding:5px 4px; display:flex; flex-direction:column; gap:4px;
+  overflow-y:auto; overflow-x:hidden;
+}
+.sidebar-nav::-webkit-scrollbar { width:0; }
+.nav-item {
+  position:relative; width:64px; height:58px; flex:0 0 58px;
+  display:flex; flex-direction:column; align-items:center; justify-content:flex-start;
+  gap:0; padding:13px 0 0; border:none; border-radius:5px;
+  background:transparent; color:var(--text); cursor:pointer;
+  font-size:11px; font-weight:400; line-height:1.2; text-align:center;
+  transition:background .12s ease, color .12s ease;
+}
+.nav-item .nav-icon {
+  width:20px; height:20px; display:flex; align-items:center; justify-content:center;
+  font-size:0; margin-bottom:3px; color:inherit; opacity:.6;
+}
+.nav-item .nav-icon svg { width:20px; height:20px; fill:currentColor; display:block; }
+.nav-item .nav-label { font-size:11px; white-space:nowrap; line-height:1.1; }
+.nav-item:hover { background:var(--hover); transform:none; color:var(--text); }
+.nav-item:hover .nav-icon { opacity:1; }
+.nav-item::before {
+  content:''; position:absolute; left:0; top:16px; width:4px; height:24px; border-radius:2px;
+  background:var(--primary); opacity:0;
+  transition:opacity .12s ease;
+}
+.nav-item:hover::before { opacity:0; }
+.nav-item.active {
+  background:var(--card-solid); color:var(--primary); font-weight:400;
+  box-shadow:0 1px 2px rgba(0,0,0,.06), 0 0 0 1px rgba(0,0,0,.03);
+}
+.nav-item.active::before { opacity:1; }
+.nav-item.active .nav-icon { opacity:1; }
+.nav-item:active { transform:none; }
+/* 侧边栏底部（移动端才用，桌面隐藏） */
+.sidebar-bottom, .sidebar-logo, .inst-switcher { display:none; }
+
+/* ---------- 6. 页面标题（Fluent 33px 细体） ---------- */
+.page-head { margin:0 0 14px; padding-top:22px; }
+.page-title {
+  font-size:33px; font-weight:300; letter-spacing:0; color:var(--text);
+  display:flex; align-items:center; gap:10px; line-height:1.25;
+}
+.page-title .pt-icon { display:inline-flex; width:0; height:0; overflow:hidden; }
+.page-desc { font-size:12.5px; color:var(--muted); margin-top:6px; }
+
+/* ---------- 7. 卡片（白底 10px 圆角 1px 边框） ---------- */
+.card {
+  background:var(--card); border:1px solid var(--line); border-radius:10px;
+  padding:16px 20px 18px; margin-bottom:12px; box-shadow:var(--shadow);
+  backdrop-filter:none; -webkit-backdrop-filter:none;
+  transition:box-shadow .16s ease, border-color .16s ease;
+}
+html[data-theme="light"] .card { background:var(--card); }
+.card:hover { transform:none; border-color:var(--line); box-shadow:0 2px 6px rgba(0,0,0,.07); }
+.card::after { display:none !important; }
+.card h2 {
+  font-size:14px; font-weight:600; color:var(--text);
+  margin:0 0 12px; padding-bottom:0; border-bottom:none;
+  display:flex; align-items:center; gap:8px; min-height:24px;
+}
+.card h2 .icon {
+  display:inline-flex; align-items:center; justify-content:center;
+  width:20px; height:20px; font-size:0; color:var(--primary); flex:none;
+}
+.card h2 .icon svg { width:18px; height:18px; fill:currentColor; }
+.card h2 .badge { font-weight:400; }
+
+/* ---------- 8. 按钮（Fluent PushButton） ---------- */
+.btn {
+  display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  height:32px; padding:0 14px; border-radius:5px; border:1px solid var(--line);
+  border-bottom-color:rgba(0,0,0,.16); background:var(--card-solid); color:var(--text);
+  font-size:13px; font-weight:400; cursor:pointer; font-family:inherit;
+  box-shadow:0 1px 1px rgba(0,0,0,.03); transition:background .1s ease;
+}
+.btn:hover { background:var(--card2); opacity:1; transform:none; box-shadow:0 1px 1px rgba(0,0,0,.03); }
+.btn:active { background:var(--card2); transform:scale(.99); box-shadow:none; }
+.btn::before { display:none; }
+.btn.small { height:28px; padding:0 11px; font-size:12px; border-radius:4px; }
+.btn.primary, .btn.green, .btn.orange, .btn.red, .btn.blue, .btn.gray {
+  border:1px solid var(--line); border-bottom-color:rgba(0,0,0,.16);
+}
+.btn.primary { background:var(--primary); color:#fff; border-color:transparent; box-shadow:0 1px 2px rgba(0,0,0,.10); }
+.btn.primary:hover { background:var(--primary-2); }
+.btn.green { background:var(--green); color:#fff; border-color:transparent; }
+.btn.orange { background:#ffb900; color:#1a1a1a; border-color:transparent; }
+.btn.red { background:var(--red); color:#fff; border-color:transparent; }
+.btn.blue { background:var(--blue); color:#fff; border-color:transparent; }
+.btn.gray { background:var(--card-solid); color:var(--text); }
+.btn.gray:hover { background:var(--card2); }
+html[data-theme="dark"] .btn.primary,
+html[data-theme="dark"] .btn.green,
+html[data-theme="dark"] .btn.red,
+html[data-theme="dark"] .btn.blue { color:#1a1a1a; }
+.logout-btn { border-radius:5px; }
+
+/* 图标按钮 */
+.icon-btn {
+  width:32px; height:32px; border-radius:5px; border:1px solid transparent;
+  background:transparent; color:var(--text); font-size:0; cursor:pointer;
+  display:inline-flex; align-items:center; justify-content:center;
+  transition:background .1s ease;
+}
+.icon-btn svg { width:16px; height:16px; fill:currentColor; }
+.icon-btn:hover { background:var(--hover); border-color:transparent; transform:none; box-shadow:none; }
+.icon-btn:active { transform:none; }
+
+/* ---------- 9. 状态徽章 / 消息 / 提示 ---------- */
+.status-badge {
+  display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:4px;
+  font-size:11.5px; font-weight:400; background:var(--card-solid); color:var(--text);
+  border:1px solid var(--line); box-shadow:none;
+}
+.status-badge .dot { width:7px; height:7px; border-radius:50%; background:var(--muted); }
+.status-badge.running .dot { background:#0f7b0f; box-shadow:none; animation:none; }
+.status-badge.stopped .dot { background:var(--red); box-shadow:none; }
+.msg { padding:10px 14px; border-radius:6px; margin-bottom:12px; font-size:13px; border:1px solid var(--line); }
+.msg.ok { background:var(--green-bg); color:var(--green); border-color:rgba(15,123,15,.3); }
+.msg.err { background:var(--red-bg); color:var(--red); border-color:rgba(196,43,28,.3); }
+
+/* ---------- 10. 表单控件（Fluent TextBox / ComboBox） ---------- */
+.cfg-select, .cfg-input-text, .cfg-input-num, .inst-select,
+.log-filter input[type=text], .log-filter select,
+.sched-form-row input[type="text"], .sched-form-row input[type="time"] {
+  height:32px; padding:0 10px; border:1px solid var(--line); border-radius:5px;
+  border-bottom:1px solid rgba(0,0,0,.16); background:var(--card-solid); color:var(--text);
+  font-size:13px; font-family:inherit; box-shadow:0 1px 1px rgba(0,0,0,.02);
+  backdrop-filter:none; -webkit-backdrop-filter:none;
+}
+.cfg-select { padding-right:28px; }
+.cfg-select:hover, .cfg-input-text:hover, .cfg-input-num:hover,
+.inst-select:hover, .log-filter input[type=text]:hover, .log-filter select:hover { background:var(--card2); }
+.cfg-select:focus, .cfg-input-text:focus, .cfg-input-num:focus, .inst-select:focus,
+.log-filter input[type=text]:focus, .log-filter select:focus {
+  outline:none; border-color:var(--line); border-bottom:2px solid var(--primary);
+  box-shadow:none;
+}
+.cfg-textarea, .yaml-editor {
+  border:1px solid var(--line); border-radius:5px; background:var(--card-solid);
+  color:var(--text); font-size:12.5px; padding:10px 12px; box-shadow:none;
+  backdrop-filter:none; -webkit-backdrop-filter:none;
+}
+.cfg-textarea:focus, .yaml-editor:focus { outline:none; border-bottom:2px solid var(--primary); box-shadow:none; }
+.cfg-row { padding:10px 0; }
+.cfg-row + .cfg-row { border-top:1px solid var(--line); }
+.cfg-label { font-size:13px; }
+.cfg-tip { font-size:11.5px; color:var(--muted); }
+.cfg-group { margin-bottom:16px; }
+.cfg-group h3 {
+  font-size:13.5px; font-weight:600; margin-bottom:8px; padding-bottom:6px;
+  border-bottom:1px solid var(--line); color:var(--text);
+}
+.cfg-note {
+  background:var(--primary-soft); border-left:3px solid var(--primary);
+  border-radius:4px; font-size:11.5px; padding:8px 10px; color:var(--muted);
+}
+.cfg-tabs { border-bottom:1px solid var(--line); margin-bottom:14px; }
+.cfg-tab { padding:8px 14px; font-size:13px; color:var(--muted); border-bottom:2px solid transparent; background:transparent; }
+.cfg-tab.active { color:var(--primary); border-bottom-color:var(--primary); font-weight:600; }
+
+/* 开关：42×22 Fluent SwitchButton */
+.switch { width:42px; height:22px; }
+.switch .slider {
+  background:transparent; border-radius:11px;
+  box-shadow:inset 0 0 0 1px var(--switch-off);
+}
+.switch .slider:before {
+  width:12px; height:12px; left:5px; bottom:5px; border-radius:50%;
+  background:var(--switch-off); box-shadow:none;
+  transition:transform .18s cubic-bezier(.4,0,.2,1), background .18s ease;
+}
+.switch input:checked + .slider { background:var(--primary); box-shadow:none; }
+.switch input:checked + .slider:before { transform:translateX(20px); background:#fff; }
+
+/* ---------- 11. 表格 / 信息网格 / 代码框 ---------- */
+.hist-table-wrap { border:1px solid var(--line); border-radius:6px; background:var(--card-solid); backdrop-filter:none; }
+.hist-table { font-size:12.5px; }
+.hist-table th {
+  background:var(--card2); color:var(--muted); font-size:11.5px; font-weight:600;
+  padding:8px 12px; letter-spacing:0; text-transform:none; border-bottom:1px solid var(--line);
+}
+.hist-table td { padding:8px 12px; border-top:1px solid var(--line); color:var(--text); }
+.hist-table tr:hover td { background:var(--card2); }
+.info-grid { gap:10px; }
+.info-item { background:var(--card2); border:1px solid var(--line); border-radius:6px; padding:12px 14px; backdrop-filter:none; }
+.info-item .label { font-size:11.5px; text-transform:none; letter-spacing:0; color:var(--muted); }
+.info-item .value { font-size:15px; font-weight:600; }
+.codebox {
+  background:var(--card2); border:1px solid var(--line); border-radius:6px;
+  font-size:12px; line-height:1.65; padding:12px; backdrop-filter:none;
+}
+.mon-stat, .task-card, .mon-chart, .sched-form, .sched-cmd, .inst-item, .inst-form-wrap {
+  background:var(--card2); border:1px solid var(--line); border-radius:6px;
+  backdrop-filter:none; -webkit-backdrop-filter:none; box-shadow:none;
+}
+.mon-stat { padding:12px 10px; }
+.mon-stat .m-value { font-size:20px; font-weight:600; }
+.mon-stat .m-label { font-size:11.5px; }
+.mon-chart { border-radius:6px; padding:6px; }
+.mon-range .btn { height:26px; padding:0 10px; font-size:11.5px; border-radius:4px; background:var(--card-solid); color:var(--muted); }
+.mon-range .btn.active { background:var(--primary); color:#fff; border-color:transparent; }
+.mon-stat:hover { transform:none; }
+
+/* 任务卡 */
+.task-grid { gap:10px; }
+.task-card { padding:14px 12px; }
+.task-card:hover { transform:none; border-color:var(--line); box-shadow:0 2px 6px rgba(0,0,0,.07); }
+.task-card:active { transform:none; }
+.task-card .icon { display:inline-flex; width:26px; height:26px; font-size:0; color:var(--primary); margin-bottom:8px; }
+.task-card .icon svg { width:26px; height:26px; fill:currentColor; }
+.task-card .label { font-size:13.5px; font-weight:600; }
+.task-card .desc { font-size:11.5px; color:var(--muted); }
+.task-card .btn { height:30px; }
+
+/* ---------- 12. 弹窗 / 抽屉 / 搜索 / 悬浮条 ---------- */
+.modal { background:var(--card-solid); border:1px solid var(--line); border-radius:8px; box-shadow:0 20px 60px rgba(0,0,0,.22); backdrop-filter:none; }
+.modal-overlay { background:rgba(0,0,0,.28); backdrop-filter:none; -webkit-backdrop-filter:none; }
+.modal-head { border-bottom:1px solid var(--line); padding:14px 18px; }
+.modal-title { font-size:15px; font-weight:600; }
+.modal-body { padding:16px 18px; }
+.sheet, .search-panel { background:var(--card-solid); border:1px solid var(--line); border-radius:8px; box-shadow:0 20px 60px rgba(0,0,0,.22); backdrop-filter:none; }
+.search-bar { border-bottom:1px solid var(--line); }
+.search-item:hover, .search-item.sel { background:var(--card2); }
+.sheet-item:hover, .sheet-item:active { background:var(--card2); }
+.runbar { background:var(--card-solid); border:1px solid var(--line); border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.16); backdrop-filter:none; }
+.rb-btn { background:var(--card2); color:var(--text); border:1px solid var(--line); border-radius:4px; font-weight:400; }
+.rb-stop { background:var(--red-bg); color:var(--red); border-color:transparent; }
+.backtop { background:var(--card-solid); border:1px solid var(--line); color:var(--text); box-shadow:0 2px 8px rgba(0,0,0,.12); backdrop-filter:none; }
+.tip { font-size:11.5px; color:var(--muted); }
+.update-inner { background:var(--primary); border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,.12); }
+.hl { background:rgba(241,140,185,.3); color:inherit; border-radius:2px; }
+
+/* ---------- 13. 登录页 ---------- */
+.auth-wrap { background:var(--win-bg); }
+.auth-card {
+  background:var(--card-solid); border:1px solid var(--line); border-radius:8px;
+  box-shadow:0 8px 30px rgba(0,0,0,.12); backdrop-filter:none; padding:34px 30px;
+}
+.auth-logo {
+  width:56px; height:56px; border-radius:8px; background:var(--primary);
+  box-shadow:none; font-size:20px;
+}
+.auth-card h1 { font-size:22px; font-weight:600; }
+.auth-card .sub { font-size:12.5px; }
+.auth-card input[type=password] {
+  height:34px; border:1px solid var(--line); border-bottom:1px solid rgba(0,0,0,.16);
+  border-radius:5px; background:var(--card-solid); font-size:14px; margin-bottom:10px;
+}
+.auth-card input[type=password]:focus { outline:none; border-bottom:2px solid var(--primary); box-shadow:none; }
+.auth-card .btn { height:36px; }
+
+/* ---------- 14. 动效收敛（Fluent 只保留轻量过渡） ---------- */
+.page.active .card { animation:none; }
+.page.active { animation:none; }
+.auth-card { animation:none; }
+
+/* ---------- 15. 响应式：桌面为 Fluent 外壳，移动端回退原侧栏抽屉 ---------- */
+@media (max-width:1024px) {
+  .titlebar { display:none; }
+  .layout { min-height:100vh; display:block; }
+  .content { max-width:none; padding:16px 16px calc(104px + env(safe-area-inset-bottom)); }
+  .sidebar {
+    display:flex; position:fixed; left:0; top:0; bottom:0; height:100%;
+    width:16rem; flex:none; transform:translateX(-100%);
+    transition:transform var(--dur-2) var(--ease);
+    background:var(--card-solid); border-right:1px solid var(--line);
+    box-shadow:0 0 40px rgba(0,0,0,.2); z-index:400;
+  }
+  .sidebar.open { transform:translateX(0); }
+  .sidebar-logo, .inst-switcher, .sidebar-bottom { display:flex; }
+  .sidebar-logo { padding:16px 16px 12px; border-bottom:1px solid var(--line); align-items:center; gap:10px; }
+  .logo-badge { width:38px; height:38px; border-radius:6px; background:var(--primary); box-shadow:none; font-size:14px; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; }
+  .logo-title { font-size:15px; font-weight:600; }
+  .logo-sub { font-size:11px; color:var(--muted); }
+  .inst-switcher { display:flex; gap:6px; padding:10px 12px; align-items:center; }
+  .sidebar-bottom { display:flex; padding:10px 12px; border-top:1px solid var(--line); gap:8px; flex-direction:column; }
+  .sidebar-nav { padding:8px 8px; gap:2px; }
+  .nav-item {
+    width:100%; height:auto; flex:0 0 auto; flex-direction:row; align-items:center;
+    justify-content:flex-start; gap:10px; padding:10px 12px; border-radius:5px;
+    font-size:13.5px; text-align:left;
+  }
+  .nav-item .nav-icon { margin-bottom:0; }
+  .nav-item .nav-icon svg { width:18px; height:18px; }
+  .nav-item .nav-label { font-size:13.5px; }
+  .nav-item::before { top:50%; left:0; transform:translateY(-50%); height:20px; }
+  .nav-item:hover { transform:none; }
+  .page-head { padding-top:6px; }
+  .page-title { font-size:24px; }
+  .mobile-topbar {
+    display:flex; background:var(--card-solid); border:1px solid var(--line);
+    border-radius:6px; box-shadow:none; padding:8px 10px; margin-bottom:12px;
+  }
+  .mobile-topbar .icon-btn { font-size:0; }
+  .hero { height:150px; }
+  .hero-title { font-size:20px; }
+}
+@media (min-width:1025px) {
+  .mobile-topbar, .mobile-tabbar { display:none !important; }
+  .sidebar { transform:none; }
+  .sidebar-overlay { display:none !important; }
+}
+
+/* ---------- 16. v1.25 补丁：图标/按钮/表格等收口 ---------- */
+/* 页面标题不显示图标（Fluent 桌面端 33px 细体标题无图标） */
+.page-title .pt-icon { display:none; }
+/* 按钮内联图标 */
+.btn .bi { width:15px; height:15px; fill:currentColor; flex:none; margin-right:5px; }
+.btn.primary .bi, .btn.green .bi, .btn.red .bi, .btn.blue .bi { fill:currentColor; }
+/* 卡片/任务卡图标容器：emoji 已换 SVG */
+.card h2 .icon svg, .task-card .icon svg { display:block; }
+/* 移动端 tabbar 图标 */
+.tab-icon { font-size:0; display:inline-flex; align-items:center; justify-content:center; }
+.tab-icon svg { width:22px; height:22px; fill:currentColor; }
+/* 保留 emoji 的按钮（主题按钮由 JS 写 emoji） */
+.icon-btn.keep-emoji { font-size:16px; }
+.icon-btn.keep-emoji svg { display:none; }
+/* 标题栏里的状态徽章与侧栏一致 */
+.titlebar .status-badge { white-space:nowrap; }
+/* 实例下拉在标题栏居中区 */
+.tb-mid .inst-select { max-width:300px; }
+/* 侧栏 72px 时隐藏滚动条占位 */
+.sidebar { overflow:hidden; }
+.sidebar-nav { overflow:visible; }
+/* 内容区首屏顶部留白（标题栏 48px 已占位，.page-head padding-top:22px 提供） */
+.content > .page { }
+/* 移动端顶栏图标 */
+.mobile-topbar .icon-btn { font-size:0; }
+.mobile-topbar .icon-btn svg { width:18px; height:18px; }
+.mobile-topbar .icon-btn.keep-emoji { font-size:16px; }
+
+/* ---------- 17. v1.25 补丁二：按钮图标与搜索栏 ---------- */
+/* 搜索栏内联图标 */
+.search-bar .si { width:15px; height:15px; fill:currentColor; }
+/* 按钮图标统一垂直居中（部分按钮有 .small/.primary 变体） */
+.btn { display:inline-flex; align-items:center; justify-content:center; gap:0; }
+.btn > svg.bi { margin-right:5px; }
+.btn > svg.bi:last-child { margin-right:0; }
+.btn.primary > svg.bi, .btn.green > svg.bi, .btn.red > svg.bi, .btn.blue > svg.bi, .btn.orange > svg.bi { fill:#fff; }
+
+/* ---------- 18. v1.25 补丁三：配置分组图标 ---------- */
+.cfg-group h3 { display:flex; align-items:center; gap:0; }
+.cfg-group h3 .g-ic { display:inline-flex; width:16px; height:16px; margin-right:8px; color:var(--primary); flex:none; }
+.cfg-group h3 .g-ic svg { width:16px; height:16px; fill:currentColor; display:block; }
+.cfg-group h3 .cfg-caret { margin-right:6px; }
+
+/* ---------- 19. v1.25 补丁四：搜索项图标 ---------- */
+.search-item .si-ico { display:inline-flex; width:18px; height:18px; align-items:center; justify-content:center; flex:none; color:var(--primary); }
+.search-item .si-ico svg { width:16px; height:16px; fill:currentColor; display:block; }
+
+/* ---------- 20. v1.25 补丁五：内联 .bi 图标全局尺寸（不限 .btn 内） ---------- */
+svg.bi { width:15px; height:15px; fill:currentColor; flex:none; }
+.cfg-tab { display:inline-flex; align-items:center; }
+.cfg-tab svg.bi { margin-right:5px; }
+.sheet-item svg.bi { width:16px; height:16px; margin-right:7px; flex:none; }
+.sheet-item { display:flex; align-items:center; flex-wrap:wrap; }
+.sheet-item .sheet-sub { flex-basis:100%; }
+
+/* ---------- 21. v1.25 补丁六：卡片标题换行（窄屏下按钮另起一行，标题不竖排） ---------- */
+.card h2 { flex-wrap:wrap; row-gap:8px; white-space:nowrap; }
+.card h2 > * { flex:none; }
+@media (max-width:640px) {
+  .card h2 { font-size:14px; gap:6px; }
+  .card h2 .btn, .card h2 .btn.small { height:26px; padding:0 10px; font-size:12px; }
+}
+
+/* ---------- 22. v1.25：首页 banner（Fluent 桌面端首页插画区） ---------- */
+.hero {
+  position:relative; height:220px; margin:0 0 16px; border-radius:10px;
+  background:url("/static/img/banner.webp") center top / cover no-repeat;
+  border:1px solid var(--line); overflow:hidden;
+  display:flex; align-items:flex-end;
+}
+.hero-in { padding:20px 24px 18px; width:100%; }
+.hero-title {
+  color:#fff; font-size:30px; font-weight:600; line-height:1.15;
+  text-shadow:0 1px 20px rgba(0,0,0,.9), 0 1px 2px rgba(0,0,0,.7);
+}
+.hero-sub {
+  color:rgba(255,255,255,.92); font-size:13px; margin-top:6px;
+  text-shadow:0 1px 12px rgba(0,0,0,.85);
+}
+.hero-badge {
+  position:absolute; right:14px; top:14px; padding:3px 9px; border-radius:5px;
+  background:rgba(0,0,0,.42); color:#fff; font-size:11px; letter-spacing:.02em;
+  backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
+}
+@media (max-width:1024px) {
+  .hero { height:150px; }
+  .hero-in { padding:14px 16px 12px; }
+  .hero-title { font-size:20px; }
+  .hero-sub { font-size:12px; margin-top:4px; }
+}
+@media (max-width:640px) {
+  .hero { height:132px; margin-bottom:12px; }
+  .hero-title { font-size:18px; }
+  .hero-badge { right:10px; top:10px; }
+}
