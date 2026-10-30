@@ -421,7 +421,12 @@ def h_instance_save(request, form, session, sid):
     is_new = True
     used: list[str] = []
     for i, item in enumerate(lst):
-        if (item["id"] == _id and _id != "") or (_id == "" and item["container"] == container):
+        # v1.24.5 修复（Q-02）：新增实例时 inst_id 为空，旧判据 `(_id == "" and
+        # item["container"] == container)` 退化成「容器名相同即视为同一条」，于是把
+        # 已有实例整条改写（id 保留、name/dir 被新值覆盖），文案还写「已更新」，
+        # 用户以为新建了一个、实际原实例配置被静默吞掉（总数仍为 1）。
+        # 现在只有**编辑**（带 inst_id）才按 id 命中更新；新增撞名一律报错且不写盘。
+        if _id != "" and item["id"] == _id:
             lst[i] = dict(item, name=name, container=container, dir=_dir, default=is_default)
             is_new = False
         elif item["container"] == container:
@@ -429,6 +434,8 @@ def h_instance_save(request, form, session, sid):
     err = ""
     if used:
         err = "容器名已被实例「" + "、".join(used) + "」使用"
+        if _id == "":
+            err += "，请换一个容器名，或编辑该实例"
     elif is_new:
         lst.append({"id": container, "name": name, "container": container,
                     "dir": _dir, "default": is_default})
@@ -1003,8 +1010,54 @@ async def handle_post(request) -> Response:
     return await render(request, result)
 
 
+def _wants_json(request) -> bool:
+    """请求是否来自 fetch/XHR（而非浏览器表单导航）。
+
+    判据按可靠性排序（任一命中即认为是异步请求）：
+    1) `Accept` 含 application/json —— 显式声明要 JSON 的调用方；
+    2) `X-Requested-With: XMLHttpRequest` —— jQuery / axios 传统标记；
+    3) **Fetch Metadata**（Sec-Fetch-*，现代浏览器对所有请求自动附加）：
+       `Sec-Fetch-Mode` 存在且不是 `navigate`，或 `Sec-Fetch-Dest` 为 `empty`。
+       这一条才是真正区分面板自身 `fetch('action', {method:'POST', body:fd})` 与
+       浏览器表单提交的依据：前者浏览器发 `Sec-Fetch-Mode: cors` /
+       `Sec-Fetch-Dest: empty`，后者发 `Sec-Fetch-Mode: navigate` /
+       `Sec-Fetch-Dest: document`。前两条对面板自己的 fetch 都不成立（它没设
+       Accept、也没设 X-Requested-With），只有这条能命中。
+    拿不到任何判据（老浏览器 / 非浏览器客户端）→ 按表单处理，回 HTML 登录页。
+    """
+    accept = str(request.headers.get("accept") or "").lower()
+    if "application/json" in accept:
+        return True
+    xrw = str(request.headers.get("x-requested-with") or "").strip().lower()
+    if xrw == "xmlhttprequest":
+        return True
+    mode = str(request.headers.get("sec-fetch-mode") or "").strip().lower()
+    if mode and mode != "navigate":
+        return True
+    dest = str(request.headers.get("sec-fetch-dest") or "").strip().lower()
+    return dest == "empty"
+
+
 async def _forward_unauth_page(request):
-    """未登录且非 login/setup_pass：与 PHP 一致渲染登录页（M5-B 起 Python 渲染）。"""
+    """未登录且非 login/setup_pass：渲染登录页 / 对 fetch 返回 401 JSON。
+
+    v1.24.5 修复（Q-03）：旧实现无条件返回 **200 + HTML 整页**。而前端所有异步操作
+    都是 `fetch('action', ...).then(r => r.json())`（static/panel.js:236/302/341/359/
+    388/440/721/1478/1518/1539/1553/1564），拿 HTML 去 JSON.parse 必抛 SyntaxError →
+    落进 `.catch` → 弹「❌ 网络错误，更新未完成」，用户完全看不出真实原因是登录已过期。
+    现在按请求来源分流（判据见 _wants_json）：
+    - fetch/XHR → 401 + {"ok": false, "auth": false, "msg": "登录已过期，请刷新页面
+      重新登录"}；前端已有的全局 fetch 拦截器（static/panel.js:1-23 见到 401 自动
+      reload）会把用户带回登录页。
+    - 普通表单提交（浏览器导航，Sec-Fetch-Mode: navigate）→ 仍回登录页 HTML
+      （与 PHP 一致，页面仍可用）。
+    注意：页面渲染路径（GET）不经过本函数，不受影响。
+    """
+    if _wants_json(request):
+        return JSONResponse(
+            {"ok": False, "auth": False, "msg": "登录已过期，请刷新页面重新登录"},
+            status_code=401,
+        )
     from services.pagectx import page_response
 
     return page_response(request)

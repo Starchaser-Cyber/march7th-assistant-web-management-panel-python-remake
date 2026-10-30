@@ -544,6 +544,77 @@ def _installed_version() -> str:
     return _version_from_text(txt)
 
 
+def _installed_version_in(root: Path) -> str:
+    """读取任意代码根下的已安装版本号（v1.24.5 Q-06）。
+
+    `_recover_interrupted()` 要用它比对「.old_* 里那份代码」和「当前 BASE_DIR 里
+    的代码」，所以不能复用固定读 `_code_root()` 的 `_installed_version()`。
+    读不到（文件缺失 / 内容被截断成半截）时返回 ""。
+    """
+    try:
+        txt = (Path(root) / "panel_migr" / "config.py").read_text("utf-8", "replace")
+    except OSError:
+        return ""
+    return _version_from_text(txt)
+
+
+# 「换入已完成」必须同时具备的关键文件（v1.24.5 Q-06）。
+# 只看 panel_migr/main.py 不够：_swap_stage 是**逐顶层条目** move，被 SIGKILL
+# 打断时完全可能停在「main.py 已换入、services/ 还是旧的」或「panel_migr 换进来了
+# 但 .venv 还没放回」的位置，这种半成品一旦被当成「换入已完成」就会把唯一完整的
+# .old_* 删掉 —— 旧代码永久丢失。这里挑的是任何一份能跑起来的 panel_migr 都必有的
+# 最小文件集。
+_CODE_VITAL = (
+    "panel_migr/main.py",
+    "panel_migr/config.py",
+    "panel_migr/routers/__init__.py",
+    "panel_migr/services/shell.py",
+)
+
+
+def _code_intact(root: Path, old: Path | None = None) -> tuple[bool, str]:
+    """判断 `root` 下的面板代码是否「换入已完成、可以安全删掉 .old_*」。
+
+    返回 (是否完整, 原因)。判据（全部满足才算完整）：
+      1. `.old_*` 里确实存在的每个 `_CODE_VITAL` 文件，在 root 里也必须存在且非空。
+         只比对 .old_* 里有的文件，是为了不把「精简安装 / 测试夹具」误判成半成品；
+         .old_* 里没有的文件无从比对，不作为证据。
+      2. root 的 `panel_migr/config.py` 必须能解析出合法版本号。读不到时**宁可换回
+         也不要删** —— 0 字节或被截断的 config.py 正是换入中断的典型半成品。
+      3. `.old_*` 里不得残留 `.venv_stash_*`：那是 `_swap_stage` 换入中途用来暂存
+         运行环境的槽位，只要还在就说明换入没走完（.venv 还没放回）。
+    """
+    root = Path(root)
+    checked = 0
+    for rel in _CODE_VITAL:
+        if old is not None and not (Path(old) / rel).exists():
+            continue                      # 旧快照里本来就没有 → 无从比对
+        checked += 1
+        p = root / rel
+        try:
+            if not p.is_file() or p.stat().st_size <= 0:
+                return False, f"{rel} 缺失或为空"
+        except OSError as e:
+            return False, f"{rel} 无法访问：{e}"
+    if checked == 0:
+        # 旧快照里一个关键文件都没有（异常残留），退化为只看 main.py
+        main_py = root / "panel_migr" / "main.py"
+        try:
+            if not main_py.is_file() or main_py.stat().st_size <= 0:
+                return False, "panel_migr/main.py 缺失或为空"
+        except OSError as e:
+            return False, f"panel_migr/main.py 无法访问：{e}"
+    if not _installed_version_in(root):
+        return False, "读不到已安装版本号（config.py 缺失或损坏）"
+    if old is not None:
+        try:
+            if any(Path(old).glob(".venv_stash_*")):
+                return False, ".old_* 里仍有 .venv_stash_*（换入未走完）"
+        except OSError:
+            pass
+    return True, "关键文件齐全且版本号可读"
+
+
 def _extract_zip(data: bytes, stage: Path) -> None:
     """解压更新包到 stage；带 zip bomb 防护（v1.24.4 P1-8）。
 
@@ -934,6 +1005,46 @@ def _cleanup_dirs(*dirs: Path) -> None:
             shutil.rmtree(p, ignore_errors=True)
 
 
+def _old_has_content(old: Path) -> bool:
+    """old/ 里是否已经搬进了东西（v1.24.5 Q-09）。
+
+    `_swap_stage` 是逐条目 move 的，中途抛异常时可能已经搬走了一部分 —— 只要
+    old/ 非空，线上代码就**可能**已被改动，必须走回滚；old/ 为空（或不存在）
+    说明线上代码一个字节都没动过，此时不该声称「已回滚」。
+    """
+    try:
+        if not old.is_dir():
+            return False
+        return any(old.iterdir())
+    except OSError:
+        # 读不准就按「动过」处理：宁可多回滚一次，也不能漏掉唯一副本。
+        return True
+
+
+def _live_code_intact(roots: list[Path], old: Path) -> tuple[bool, str]:
+    """线上代码（任一候选根）是否「换入已完成」（v1.24.5 Q-06）。
+
+    多个候选根时取**最严格**的结论：只要有任何一个根上有 panel_migr/ 却判为不完整，
+    就返回不完整（宁可换回，也不删唯一副本）。
+    """
+    judged = 0
+    last_why = "未找到 panel_migr/ 目录"
+    for root in roots:
+        try:
+            if not (Path(root) / "panel_migr").is_dir():
+                continue
+        except OSError:
+            continue
+        judged += 1
+        ok, why = _code_intact(root, old)
+        if not ok:
+            return False, f"{root}：{why}"
+        last_why = why
+    if judged == 0:
+        return False, last_why
+    return True, last_why
+
+
 def _recover_interrupted() -> dict:
     """崩溃/断电后恢复：扫描 backups/ 下的 .old_* 与 .stage_* 残留（v1.24.4 P1-4）。
 
@@ -941,20 +1052,28 @@ def _recover_interrupted() -> dict:
     新代码可能只换入了一半，而唯一完整的旧代码躺在 .old_* 里没人管；下次更新又
     按时间戳生成新目录，旧残留永远堆积。这里在**持锁后**调用，规则：
       - `.stage_*`：换入前的临时解压目录，绝无保留价值 → 直接删；
-      - `.old_*`：若面板关键文件（panel_migr/main.py）缺失或为空 → 判定换入
-        做到一半，把 .old_* 内容换回；换回成功才删残留，失败则原样保留；
-      - `.old_*` 且关键文件完好 → 说明换入已完成、只是没来得及清理 → 删。
-    返回 {"recovered": [...], "removed": [...], "errors": [...]}，供日志/测试断言。
+      - `.old_*`：若线上代码**不完整**（见 `_code_intact`）→ 判定换入做到一半，
+        把 .old_* 内容换回；换回成功才删残留，失败则原样保留；
+      - `.old_*` 且线上代码完整 → 说明换入已完成、只是没来得及清理 → 删。
+
+    v1.24.5（Q-06）：完整性判据从「`panel_migr/main.py` 存在且非空」升级为
+    `_code_intact()`（关键文件集 + 版本号可读 + 无残留 .venv_stash）。旧判据下
+    「main.py 已换入、其余还是半截」会被误判成换入完成，于是把唯一完整的
+    .old_* 删掉 —— 旧代码永久丢失。任何一项读不准时一律按「不完整」处理，
+    宁可多换回一次，也不删掉唯一副本。
+
+    返回 {"recovered": [...], "removed": [...], "errors": [...], "notes": [...]}。
     """
-    out: dict = {"recovered": [], "removed": [], "errors": []}
+    out: dict = {"recovered": [], "removed": [], "errors": [], "notes": []}
     try:
         d = backups_dir()
         entries = sorted(d.glob(".stage_*")) + sorted(d.glob(".old_*"))
     except OSError as e:
         out["errors"].append(str(e))
         return out
-    # 换回目标与 _restore_old 一致（cfg.BASE_DIR）；分离布局下代码目录也一并检查，
-    # 任一存在完整 main.py 就说明换入已完成，old/ 只是没来得及清理。
+    # 换回目标与 _restore_old 一致（cfg.BASE_DIR）；分离布局下代码目录也要看。
+    # 判据是「所有存在 panel_migr/ 的候选根都必须完整」：分离布局下换入写的是
+    # BASE_DIR，若它被换了一半而 CODE_ROOT 是完好的，仍然要换回。
     roots = [Path(cfg.BASE_DIR)]
     try:
         cr = _code_root()
@@ -972,16 +1091,8 @@ def _recover_interrupted() -> dict:
             except OSError as e:
                 out["errors"].append(f"清理 {p.name} 失败：{e}")
             continue
-        # .old_*：先判断面板代码是否完整
-        intact = False
-        for root in roots:
-            main_py = root / "panel_migr" / "main.py"
-            try:
-                if main_py.is_file() and main_py.stat().st_size > 0:
-                    intact = True
-                    break
-            except OSError:
-                continue
+        # .old_*：判断线上代码是否真的换入完成（Q-06 新判据）
+        intact, why = _live_code_intact(roots, p)
         if intact:
             try:
                 shutil.rmtree(p)
@@ -989,6 +1100,7 @@ def _recover_interrupted() -> dict:
             except OSError as e:
                 out["errors"].append(f"清理 {p.name} 失败：{e}")
             continue
+        out["notes"].append(f"{p.name}：线上代码不完整（{why}），换回旧代码")
         # 关键文件缺失 → 换回旧代码
         try:
             res = _restore_old(p)
@@ -1198,21 +1310,41 @@ def _apply_zip(data: bytes, expect_ver: str) -> dict:
     stage = backups_dir() / f".stage_{tag}"
     old = backups_dir() / f".old_{tag}"
     rebuilt = False
+    # v1.24.5（Q-09）：区分失败阶段。只有**线上代码真的被动过**，说「已回滚」才成立。
+    # 解压 / 结构校验阶段失败时线上代码一个字节都没动过，此时报「更新失败已回滚」
+    # 会让排障的人误以为发生过一次换入 + 回滚，去 backups/ 找并不存在的 .old_*。
+    # 判据用「old/ 里是否有东西」而不是「_swap_stage 是否返回」：换入是逐条目
+    # move，中途抛异常时可能已经搬走了一部分，那仍然必须回滚。
+    phase = "extract"          # extract → swap → verify → runtime → health
     hr: dict = {"ok": True, "skipped": True, "probe_ok": False, "msg": ""}
     try:
         _extract_zip(data, stage)
+        phase = "swap"
         _swap_stage(stage, old)
+        phase = "verify"
         cur = _installed_version()
         if cur != expect_ver:
             raise RuntimeError(f"换入后版本校验失败（读到 {cur or '空'}，应为 {expect_ver}）")
+        phase = "runtime"
         rt = _ensure_runtime()
         if not rt.get("ok"):
             raise RuntimeError(rt.get("msg") or "运行环境校验失败")
         rebuilt = bool(rt.get("rebuilt"))
+        phase = "health"
         hr = _restart_and_health_check(old=old, stage=stage)
         if not hr.get("ok") and not hr.get("skipped"):
             raise RuntimeError(hr.get("msg") or "重启后健康探测失败")
     except Exception as e:
+        # v1.24.5（Q-09）：解压/结构校验阶段失败 —— 线上代码未被触碰，谈不上回滚。
+        # 直接清掉解压残渣，文案如实说明「尚未改动线上代码」。
+        if not _old_has_content(old):
+            # old/ 为空（或不存在）：_swap_stage 连一个条目都没搬走，删掉它也不会
+            # 丢东西；留着空 .old_* 只会让下次 _recover_interrupted 多一次判断。
+            _cleanup_dirs(stage, old)
+            return {
+                "ok": False, "rolled_back": False, "restored": 0, "phase": phase,
+                "msg": f"更新失败（尚未改动线上代码）：{e}",
+            }
         # v1.24.4（P0-2）：回滚结果必须如实反映到消息里。此前 _restore_old 的异常
         # 被 `except Exception: pass` 静默吞掉，紧接着 _cleanup_dirs 删掉 old/ ——
         # 旧代码唯一副本没了，文案还谎称「已回滚」。
@@ -1224,12 +1356,14 @@ def _apply_zip(data: bytes, expect_ver: str) -> dict:
         if not rb.get("ok"):
             detail = "；".join(rb.get("errors") or []) or "未知原因"
             return {
-                "ok": False, "rolled_back": False, "old_dir": str(old),
+                "ok": False, "rolled_back": False, "restored": int(rb.get("restored") or 0),
+                "old_dir": str(old), "phase": phase,
                 "msg": (f"更新失败，且自动回滚未完成：{e}（回滚错误：{detail}）。"
                         f"旧代码已保留在 {old}，请人工恢复后再重启面板"),
             }
         _cleanup_dirs(stage, old)
-        return {"ok": False, "rolled_back": True, "msg": f"更新失败已回滚：{e}"}
+        return {"ok": False, "rolled_back": True, "restored": int(rb.get("restored") or 0),
+                "phase": phase, "msg": f"更新失败已回滚：{e}"}
     if hr.get("detach"):
         # 重启/探测/回滚由独立进程完成，old/ 的清理权也在它手里：此处只清 stage/
         _cleanup_dirs(stage)

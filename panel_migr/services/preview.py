@@ -157,8 +157,100 @@ def normalize_fps(v) -> int:
     return n if n in FPS_CHOICES else DEFAULT_FPS
 
 
+# ===== H.264 编码器探测（Q-01）=====
+# libx264 因 GPL 在 Alpine 官方包与多数静态构建里常被剔除（只带 libopenh264 /
+# h264_vaapi）。旧版硬编码 libx264 → ffmpeg 起来后立刻 exit 8，前端只看到 1000
+# 正常关闭 → 无限重连，用户完全不知道原因。
+
+# 候选顺序：软件编码器优先（滤镜链与旧版一致），硬件编码器需要对应设备节点
+_ENC_CANDIDATES = (
+    "libx264",
+    "libopenh264",
+    "h264_vaapi",
+    "h264_nvenc",
+    "h264_qsv",
+    "h264_v4l2m2m",
+)
+
+# 硬件编码器需要的设备节点（不存在就不选它，避免"探测到了但一跑就崩"）
+_HW_DEVICES = {
+    "h264_vaapi": ("/dev/dri/renderD128",),
+    "h264_qsv": ("/dev/dri/renderD128",),
+    "h264_nvenc": ("/dev/nvidia0", "/dev/nvidiactl"),
+    "h264_v4l2m2m": ("/dev/video0", "/dev/video11", "/dev/video12"),
+}
+
+_ENC_CACHE: list[str] | None = None
+
+
+def reset_codec_cache() -> None:
+    """测试用：清空编码器探测缓存（进程内只 fork 一次 ffmpeg -encoders）。"""
+    global _ENC_CACHE
+    _ENC_CACHE = None
+
+
+def _encoders() -> list[str]:
+    """`ffmpeg -encoders` 输出行（带缓存；探测失败缓存空列表，避免每次 WS 都 fork）。"""
+    global _ENC_CACHE
+    if _ENC_CACHE is None:
+        try:
+            r = run_cmd(f'"{config.FFMPEG_BIN}" -hide_banner -encoders', timeout=20)
+            out = (r.get("out") or "") if r.get("code") == 0 else ""
+        except Exception:
+            out = ""
+        _ENC_CACHE = out.splitlines()
+    return _ENC_CACHE
+
+
+def _device_ok(codec: str) -> bool:
+    """硬件编码器：设备节点存在才认为可用。"""
+    devs = _HW_DEVICES.get(codec)
+    if not devs:
+        return True
+    return any(Path(d).exists() for d in devs)
+
+
+def h264_codec() -> str | None:
+    """探测可用的 H.264 编码器名；一个都没有 → None（H.264 档不可用）。"""
+    lines = _encoders()
+    if not lines:
+        return None
+    for c in _ENC_CANDIDATES:
+        if any(c in line for line in lines) and _device_ok(c):
+            return c
+    return None
+
+
+def _codec_pre_input(codec: str) -> list:
+    """编码器要求放在 `-i` **之前**的参数（vaapi 需要先初始化设备）。"""
+    if codec == "h264_vaapi":
+        return ["-vaapi_device", _HW_DEVICES["h264_vaapi"][0]]
+    return []
+
+
+def _codec_args(codec: str) -> list:
+    """按编码器给出 `-c:v` 及其私有参数（-preset/-tune 是 libx264 专属）。"""
+    if codec == "libx264":
+        return ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency"]
+    if codec == "libopenh264":
+        return ["-c:v", "libopenh264", "-b:v", "4M"]
+    if codec == "h264_nvenc":
+        return ["-c:v", "h264_nvenc", "-preset", "p1", "-tune", "ull"]
+    return ["-c:v", codec]
+
+
+def _codec_vf(codec: str, fps: int) -> str:
+    """按编码器给出滤镜链：软件编码器吃 yuv420p，vaapi/qsv 需要 hwupload。"""
+    base = f"fps={fps},scale=trunc(iw/2)*2:trunc(ih/2)*2"
+    if codec == "h264_vaapi":
+        return base + ",format=nv12,hwupload"
+    if codec == "h264_qsv":
+        return base + ",format=nv12,hwupload=extra_hw_frames=64"
+    return base
+
+
 def build_ffmpeg_args(fps: int = DEFAULT_FPS) -> list:
-    """按帧率生成 ffmpeg 转码参数。
+    """按帧率生成 ffmpeg 转码参数（编码器由 h264_codec() 探测，不再硬编码 libx264）。
 
     -use_wallclock_as_timestamps 1：输入时间轴锁墙钟。上游 CDP 帧到达率受游戏实际
     帧率影响（7~30fps 波动）；旧版声明式 -framerate 15 在上游到 30fps 时 5s 墙钟会
@@ -168,19 +260,28 @@ def build_ffmpeg_args(fps: int = DEFAULT_FPS) -> list:
     -g/-keyint_min=N：每个 fMP4 chunk 都以关键帧开始，端到端延迟 ≈ 1 个关键帧间隔。
     """
     fps = normalize_fps(fps)
-    return [
-        "-hide_banner", "-loglevel", "error",
+    # 探测不到编码器时仍按 libx264 出参：调用方（routers/preview.py）已用
+    # ffmpeg_available() 拦截，这里只保证返回的参数结构合法、可单测。
+    codec = h264_codec() or "libx264"
+    args = ["-hide_banner", "-loglevel", "error"]
+    args += _codec_pre_input(codec)
+    args += [
         "-f", "image2pipe", "-c:v", "mjpeg",
         "-use_wallclock_as_timestamps", "1", "-framerate", str(fps), "-i", "pipe:0",
-        "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
-        "-pix_fmt", "yuv420p",
+    ]
+    args += _codec_args(codec)
+    if codec in ("libx264", "libopenh264", "h264_nvenc", "h264_v4l2m2m"):
+        args += ["-pix_fmt", "yuv420p"]
+    args += [
         "-g", str(fps), "-keyint_min", str(fps), "-sc_threshold", "0",
-        "-vf", f"fps={fps},scale=trunc(iw/2)*2:trunc(ih/2)*2",
+        "-vf", _codec_vf(codec, fps),
         "-f", "mp4",
         "-movflags", "frag_keyframe+empty_moov+default_base_moof",
         "pipe:1",
     ]
+    return args
 
 
 def ffmpeg_available() -> bool:
-    return shutil.which(config.FFMPEG_BIN) is not None
+    """ffmpeg 可执行 **且** 编入了可用的 H.264 编码器（Q-01：只判 which 不够）。"""
+    return shutil.which(config.FFMPEG_BIN) is not None and h264_codec() is not None

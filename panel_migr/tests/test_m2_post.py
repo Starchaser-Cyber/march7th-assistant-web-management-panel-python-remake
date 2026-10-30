@@ -168,8 +168,9 @@ def test_login_no_cookie_creates_session(monkeypatch):
     assert r.status_code == 302
     sc = r.headers.get("set-cookie", "")
     assert "PHPSESSID=" in sc
-    # 6-bit 字符集 [a-zA-Z0-9,-] 的 sid 有 ~40% 概率含逗号，标准库 Set-Cookie 编码会
-    # 转义成 \054（客户端自动反转义）；用 SimpleCookie 解析拿到原始 32 位 sid。
+    # v1.24.5（Q-07）：new_sid() 的字母表已去掉逗号（RFC 6265 的 cookie-octet 不允许
+    # 0x2C），所以正常情况下不会出现 \054 转义。这里仍用 SimpleCookie 解析，既能拿到
+    # 原始 32 位 sid，也顺带兼容升级前下发的历史会话（那些 id 含逗号、会被转义）。
     from http.cookies import SimpleCookie
     jar = SimpleCookie()
     jar.load(sc)

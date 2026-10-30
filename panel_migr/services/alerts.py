@@ -60,6 +60,7 @@ _ALERT_DEFAULT = {
     # v1.24.4（P0-4 / P1-16）：静默期只是「延后推送」，不是「丢弃边沿」。
     # 静默期内观测到的 down 边沿 / aborted 先记在这里，静默期结束后补推。
     "pending_down": False,      # 静默期内检测到 down 边沿，待静默结束后补推
+    "pending_down_first": False,  # 上面那条边沿是否为「首次观测即 down」（Q-04 文案用）
     "pending_aborted": [],      # 静默期内被压下的 aborted 项：[{id,label}]
     # v1.22 状态机增强字段
     "retry_at": 0,              # 下次重试时间（epoch 秒，0=无待重试）
@@ -367,18 +368,31 @@ def _enqueue_pending(inst: dict, s: dict, grp: list, now: int, msg: str) -> None
                        (msg or "推送失败") + "，将自动重试", sev)
 
 
-def _push_events(inst: dict, s: dict, events_out: list, now: int) -> bool:
+def _push_events(inst: dict, s: dict, events_out: list, now: int,
+                 busy_kinds=None) -> bool:
     """按静音 / 去重 / 冷静期规则推送；按 severity 分组走各自通道。
 
     events_out: [(kind, title, body, severity)]（3 元组按 warn 兼容）。
     无论是否推送都会发布事件（供前端展示），未推送的附带 retry_count / 说明 msg。
+
+    busy_kinds：Q-08 —— 本轮 `_process_pending` 已经实际发送过的 kind 集合。
+    这些 kind 本轮已占用推送通道（用户刚收到过一条同类告警），此处不再重复
+    推送，只发布一条 `pushed=False` 的事件说明「同类型告警本轮已重试推送」。
+    只按 kind 抑制而不是整轮丢弃：其它 kind（disk / morning / upstream /
+    recovered）与 pending 队列没有竞争，不应被连坐推迟。
     """
+    busy = set(busy_kinds or ())
     dedup = int(cfg.ALERT_DEDUP_WINDOW)
     lpk = s.get("last_push_kind_at") or {}
     mute = set(alert_cfg(inst).get("mute") or [])
     sendable: list = []
     for ev in events_out:
         kind, title, body, sev = _ev4(ev)
+        if kind in busy:
+            # Q-08：本轮已通过重试队列推送过同 kind 告警，避免重复打扰
+            _publish_alert(inst, kind, title, body, False, 0,
+                           "同类型告警本轮已通过重试队列推送，未重复推送", sev)
+            continue
         if sev in mute:
             _publish_alert(inst, kind, title, body, False, 0,
                            f"{sev} 级别已静音，仅记录不推送", sev)
@@ -418,19 +432,36 @@ def _push_events(inst: dict, s: dict, events_out: list, now: int) -> bool:
     return pushed_any
 
 
-def _process_pending(inst: dict, s: dict, now: int) -> bool:
-    """处理待重试队列。返回 True 表示有 pending 存在（本轮不另起新推送）。
+def _process_pending(inst: dict, s: dict, now: int) -> set:
+    """处理待重试队列。返回本轮【实际尝试发送】的 kind 集合。
+
+    Q-08：返回值从 bool 改为 kind 集合，因为「有 pending」与「本轮真的发了推送」
+    是两件事：
+    - 队列非空但 `retry_at` 未到（还在退避等待）→ 本轮没有发出任何推送，
+      返回空集，后续新边沿照常走自己的通道；
+    - 本轮真的重试了某些 kind（成功或失败都算发过）→ 这些 kind 已占用本轮
+      推送通道，返回给 `_push_events` 做**按 kind 去重**，避免同一轮既重试
+      pending、又对刚观测到的同类边沿再推一条（`ALERT_DEDUP_WINDOW=0` 时
+      用户会收到两条重复告警）。
+    只抑制同 kind、不整轮跳过，是因为 disk/morning/upstream/recovered 等
+    其它 kind 与 pending 队列无竞争，整轮跳过会让它们凭空晚一轮（基线用例
+    `test_v122.py::test_alert_backoff_suppresses_new_push` 就依赖冷静期内
+    recovered 仍被记录）。
 
     重试节奏：30s → 60s → 120s，最多 ALERT_MAX_RETRY 次；成功即清除并清零失败计数。
     v1.24：按 severity 分组重试，各自走对应级别通道。
     """
     pend = [p for p in (s.get("pending") or []) if isinstance(p, dict)]
     if not pend:
-        return False
+        return set()
     if before_deadline(now, s.get("retry_at")):
-        return True
+        # 仍在退避等待期：本轮不发推送，因此不占用任何 kind
+        return set()
     # 说明：重试队列不受冷静期阻断——重试本身已被 30/60/120 限次约束；
     # 冷静期只用于抑制「新的」告警推送（见 _push_events）。
+
+    # Q-08：本批实际会发出推送的 kind 集合（无论成败都算占用通道）
+    sent_kinds = {str(p.get("kind") or "") for p in pend}
 
     groups: dict = {}
     for p in pend:
@@ -465,7 +496,7 @@ def _process_pending(inst: dict, s: dict, now: int) -> bool:
             _publish_alert(inst, str(p.get("kind") or ""), str(p.get("title") or ""),
                            str(p.get("body") or ""), True, rc, "重试成功",
                            str(p.get("severity") or "warn"))
-        return True
+        return sent_kinds
 
     rc = int(s.get("retry_count") or 0) + 1
     s["retry_count"] = rc
@@ -482,7 +513,7 @@ def _process_pending(inst: dict, s: dict, now: int) -> bool:
                            str(p.get("body") or ""), False, rc,
                            "重试次数用尽，已放弃推送",
                            str(p.get("severity") or "warn"))
-        return True
+        return sent_kinds
 
     nxt = now + int(delays[rc])
     s["retry_at"] = nxt
@@ -491,7 +522,22 @@ def _process_pending(inst: dict, s: dict, now: int) -> bool:
                        str(p.get("body") or ""), False, rc,
                        f"推送失败，{int(delays[rc])} 秒后第 {rc} 次重试",
                        str(p.get("severity") or "warn"))
-    return True
+    return sent_kinds
+
+
+def _down_body(first: bool = False, delayed: bool = False) -> str:
+    """容器掉线的推送正文。
+
+    Q-04：`first=True` 表示「首次观测就是 down」（面板刚接管 / 状态文件被重置 /
+    容器从未起来过），文案要说明这不是「从运行中掉下去」，否则用户会以为是
+    刚发生的中断。`delayed=True` 表示该边沿发生在静默期内、现在补发（P0-4）。
+    """
+    body = "🛑 容器意外停止\n面板检测到容器已不在运行，任务可能中断。"
+    if first:
+        body += "\n（首次检测：面板接管时容器即未运行，或告警状态被重置过）"
+    if delayed:
+        body += "\n（该故障发生在告警静默期内，现已补发提醒）"
+    return body
 
 
 def alert_tick(inst: dict, force: bool = False) -> dict:
@@ -518,25 +564,47 @@ def alert_tick(inst: dict, force: bool = False) -> dict:
         s["last_tick"] = now
 
         # 1) 先处理待重试队列（失败告警的退避重试）
-        _process_pending(inst, s, now)
+        # Q-08：此前调用处丢弃返回值，于是同一轮既重试了 pending、又对同一轮
+        # 观测到的同类边沿另起一次 _push_events —— 用户实测（去重窗口设 0 时）
+        # 收到两条重复告警。现在 _process_pending 返回「本轮真的发送过的 kind」，
+        # 交给 _push_events 做按 kind 抑制。
+        #
+        # 为什么是「按 kind 抑制」而不是任务书建议的「整轮跳过」：基线用例
+        # test_v122.py::test_alert_backoff_suppresses_new_push 明确要求冷静期
+        # （必然伴随 pending）内观测到的 recovered 仍要发布事件（pushed=False
+        # + 「冷静期」说明）。整轮跳过会把 recovered / disk / morning /
+        # upstream 一起推迟一轮，既破坏该用例，也让这些与 pending 无竞争的
+        # 通道无故延迟。因此只抑制「本轮已重试过的同 kind」，其它照常。
+        busy_kinds = _process_pending(inst, s, now)
 
         run = container_is_running(inst)
         prev = s.get("prev")
-        s["prev"] = run
         cfgv = alert_cfg(inst)
         pushed = False
+        s["prev"] = run
         if cfgv["enable"]:
             quiet = before_deadline(now, s.get("quiet_until"))
             events_out: list = []   # (kind, title, body, severity)
-            if prev is True and run is False and not s.get("alerted_down"):
+
+            # Q-04：down 边沿判据不能只认 prev is True。
+            # 面板首次接管时容器就没起来（或 alert_state.json 被清空/重置），
+            # prev 初始为 None，第一轮 tick 写入 prev=False 后永远是
+            # False → False，down 告警永不触发 —— 用户以为「没消息=一切正常」，
+            # 实际容器根本没跑。因此「首次观测即 down」也算一次 down 边沿。
+            # 反例不受影响：prev is None and run is True 只是首次正常，不告警。
+            first_down = (prev is None and run is False)
+            down_edge = ((prev is True or first_down) and run is False
+                         and not s.get("alerted_down"))
+            if down_edge:
                 if quiet:
                     # P0-4：静默期只是延后推送，边沿先记账，静默期结束补推
                     s["pending_down"] = True
-                    log.info("静默期内检测到容器掉线，已记 pending_down，"
-                             "静默期结束后补推")
+                    s["pending_down_first"] = bool(first_down)
+                    log.info("静默期内检测到容器掉线（prev=%r），已记 "
+                             "pending_down，静默期结束后补推", prev)
                 else:
-                    body = "🛑 容器意外停止\n面板检测到容器已不在运行，任务可能中断。"
-                    events_out.append(("down", "容器意外停止", body, "critical"))
+                    events_out.append(("down", "容器意外停止",
+                                       _down_body(first_down), "critical"))
                     s["alerted_down"] = True
             elif prev is False and run is True and s.get("alerted_down"):
                 body = "✅ 容器已恢复\n容器已重新运行，可以正常跑任务了。"
@@ -546,14 +614,16 @@ def alert_tick(inst: dict, force: bool = False) -> dict:
             # 静默期结束：补推静默期内被压下的 down 边沿（P0-4 核心补偿）
             if (not quiet and s.get("pending_down")
                     and run is False and not s.get("alerted_down")):
-                body = ("🛑 容器意外停止\n面板检测到容器已不在运行，任务可能中断。"
-                        "\n（该故障发生在告警静默期内，现已补发提醒）")
-                events_out.append(("down", "容器意外停止", body, "critical"))
+                events_out.append(("down", "容器意外停止",
+                                   _down_body(bool(s.get("pending_down_first")),
+                                              delayed=True), "critical"))
                 s["alerted_down"] = True
                 s["pending_down"] = False
+                s["pending_down_first"] = False
             elif not quiet and s.get("pending_down"):
                 # 静默期内已经自行恢复（或状态不可判定）→ 边沿失效，丢弃
                 s["pending_down"] = False
+                s["pending_down_first"] = False
 
             hd = history_sync(inst)
             aborted_seen = list(s.get("aborted_seen") or [])
@@ -589,7 +659,8 @@ def alert_tick(inst: dict, force: bool = False) -> dict:
                 pend_ab = []
             s["pending_aborted"] = pend_ab[-20:]
             if events_out:
-                pushed = _push_events(inst, s, events_out, now)
+                pushed = _push_events(inst, s, events_out, now,
+                                      busy_kinds=busy_kinds)
         saved = alert_state_save(inst, s)
         # P1-17：写盘失败时不能假装成功——内存态与磁盘不一致会让 prev 回退
         # 到旧值，这里明确回传，调用方可据此提示「状态机降级」。

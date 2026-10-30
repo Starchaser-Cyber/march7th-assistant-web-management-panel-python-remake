@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 
 import httpx
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -25,6 +26,11 @@ _HOP = {
 
 # ajax 注册表项：GET ?ajax=preview_token（与 PHP preview_token() 分支对齐）
 PREVIEW_GET_HANDLERS = {"preview_token": lambda request: pv.preview_token()}
+
+log = logging.getLogger(__name__)
+
+# ffmpeg stderr 保留的末尾行数（Q-05）：只留尾部，足够定位 exit 原因
+_ERR_TAIL_LINES = 50
 
 
 def _container(request_or_ws) -> str:
@@ -105,7 +111,7 @@ async def ws_h264(websocket) -> None:
     本地先做 token 校验（省一次无效上游连接），失败按 close code 1008 拒绝。
     """
     if not pv.ffmpeg_available():
-        await _close(websocket, 1013, "服务器未安装 ffmpeg，H.264 档不可用")
+        await _close(websocket, 1013, "未安装 ffmpeg 或不支持 H.264 编码，H.264 档不可用")
         return
 
     secret = pv.preview_secret()
@@ -148,34 +154,65 @@ async def ws_h264(websocket) -> None:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
+    err_tail: list[str] = []
+    drain = asyncio.create_task(_drain_err(proc, err_tail))
     tasks = [
         asyncio.create_task(_jpeg_to_ffmpeg(upstream, proc)),
         asyncio.create_task(_fmp4_to_client(proc, websocket)),
         asyncio.create_task(_watch_client(websocket)),
+        drain,
     ]
     try:
         done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        for t in pending:
-            t.cancel()
-        for t in pending:
-            try:
-                await t
-            except (asyncio.CancelledError, Exception):
-                pass
+        # Q-05：ffmpeg 退出时 stdout/stderr 同时 EOF，drain 可能先被唤醒。此时若立即
+        # 清理会把 stdout 里尚未读走的尾部 fMP4 数据丢掉（表现为画面截断），所以
+        # 「只有 drain 结束」不算整体结束，继续等其余任务。
+        while pending and all(t is drain for t in done):
+            done, pending = await asyncio.wait(
+                pending, return_when=asyncio.FIRST_COMPLETED
+            )
     finally:
+        # stdout EOF 通常意味着 ffmpeg 正在退出：先给 drain 最多 1s 把 stderr 收尾，
+        # 否则紧跟的 cancel 会让 err_tail 为空、拿不到 exit 原因。
+        if not drain.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(drain), timeout=1.0)
+            except (asyncio.TimeoutError, Exception):
+                pass
         for t in tasks:
             if not t.done():
                 t.cancel()
+        # cancel 后必须 await，否则 "Task was destroyed but it is pending"
+        await asyncio.gather(*tasks, return_exceptions=True)
         try:
             await upstream.close()
         except Exception:
             pass
-        if proc.returncode is None:
+        # 先给 ffmpeg 自然退出的机会（stdin 已关 → 编完剩余帧后 exit 0）
+        rc = proc.returncode
+        if rc is None:
+            try:
+                rc = await asyncio.wait_for(proc.wait(), timeout=2.0)
+            except Exception:
+                rc = None
+        killed = rc is None
+        if killed:
             try:
                 proc.kill()
             except ProcessLookupError:
                 pass
-        await _close(websocket, 1000, "")
+            try:
+                await proc.wait()
+            except Exception:
+                pass
+        reason = ""
+        if not killed and rc not in (0, None):
+            reason = _exit_reason(rc, err_tail)
+            log.warning(
+                "ws264 ffmpeg 异常退出 code=%s container=%s: %s",
+                rc, container, " | ".join(err_tail[-5:]) or "(stderr 为空)",
+            )
+        await _close(websocket, 1013 if reason else 1000, reason)
 
 
 async def _jpeg_to_ffmpeg(upstream, proc) -> None:
@@ -202,6 +239,40 @@ async def _fmp4_to_client(proc, websocket) -> None:
         if not chunk:
             break
         await websocket.send_bytes(chunk)
+
+
+async def _drain_err(proc, tail: list) -> None:
+    """持续排空 ffmpeg stderr（Q-05）。
+
+    不排空时管道写满内核缓冲（Linux 默认 64 KiB）后 ffmpeg 会阻塞在写 stderr，
+    转码停顿 → 预览冻结，且错误信息全部丢失。这里只保留末尾 _ERR_TAIL_LINES 行。
+    """
+    err = getattr(proc, "stderr", None)
+    if err is None:
+        return
+    try:
+        while True:
+            line = await err.readline()
+            if not line:
+                break
+            tail.append(line.decode("utf-8", "replace").rstrip())
+            if len(tail) > _ERR_TAIL_LINES:
+                del tail[0]
+    except Exception:
+        pass
+
+
+def _exit_reason(rc: int, tail: list) -> str:
+    """ffmpeg 非零退出 → 给前端的 close reason（取 stderr 最后一条有效行）。"""
+    last = ""
+    for line in reversed(tail):
+        if line.strip():
+            last = line.strip()
+            break
+    msg = f"ffmpeg 异常退出（code {rc}）"
+    if last:
+        msg += "：" + last
+    return msg[:200]
 
 
 async def _watch_client(websocket) -> None:

@@ -4,8 +4,8 @@
 
 ![许可证](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Python 版本](https://img.shields.io/badge/python-3.11%2B-green)
-![最新版本](https://img.shields.io/badge/version-V1.24.4-orange)
-![构建状态](https://img.shields.io/badge/build-493%20tests%20passing-brightgreen)
+![最新版本](https://img.shields.io/badge/version-V1.24.5-orange)
+![构建状态](https://img.shields.io/badge/build-564%20tests%20passing-brightgreen)
 ![Stars](https://img.shields.io/github/stars/Starchaser-Cyber/march7th-assistant-web-management-panel-python-remake?style=flat)
 
 ## 项目详细介绍

@@ -6,6 +6,7 @@ health 探测默认 bypass，自愈用例单独走真探测路径。
 """
 import asyncio
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -38,17 +39,26 @@ def _write_secret(text: str) -> None:
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch):
     pv.reset_state()
+    pv.reset_codec_cache()   # Q-01：编码器探测有进程内缓存，测试间必须清
     monkeypatch.setattr(cfg, "PREVIEW_SECRET_FILE", str(_secret_file))
     yield
     pv.reset_state()
+    pv.reset_codec_cache()
 
 
 @pytest.fixture
 def fake_run_cmd(monkeypatch):
-    """docker inspect → 127.0.0.1；docker exec -d → 记录并成功。"""
+    """docker inspect → 127.0.0.1；docker exec -d → 记录并成功。
+
+    `ffmpeg -encoders`（Q-01 编码器探测）必须放行到真 run_cmd：否则桩返回的
+    docker 假输出会被当成编码器列表，ffmpeg_available() 误判为不可用。
+    """
     exec_calls: list[str] = []
+    real_run = pv.run_cmd
 
     def _run(cmd, timeout=120):
+        if "-encoders" in cmd:
+            return real_run(cmd, timeout=timeout)
         exec_calls.append(cmd)
         if cmd.startswith("docker inspect"):
             return {"code": 0, "out": "127.0.0.1"}
@@ -56,6 +66,14 @@ def fake_run_cmd(monkeypatch):
 
     monkeypatch.setattr(pv, "run_cmd", _run)
     return exec_calls
+
+
+@pytest.fixture
+def h264_present():
+    """假定机器有 libx264（不真探测）：让 ws264 用例与机器环境解耦。"""
+    pv._ENC_CACHE = [" V....D libx264              libx264 H.264 / AVC (codec h264)"]
+    yield
+    pv.reset_codec_cache()
 
 
 @pytest.fixture
@@ -313,15 +331,17 @@ def test_ws264_rejects_when_ffmpeg_missing(fake_run_cmd, bypass_health, monkeypa
     assert "ffmpeg" in msg
 
 
-def test_ws264_rejects_bad_token(fake_run_cmd, bypass_health):
+def test_ws264_rejects_bad_token(fake_run_cmd, bypass_health, h264_present):
     _write_secret("s" * 48)
     with client.websocket_connect("/m7a-preview/ws264?token=wrong") as ws:
         msg = ws.receive_text()
     assert "token" in msg
 
 
-def test_ws264_pipeline_emits_fmp4(fake_run_cmd, bypass_health, monkeypatch):
+def test_ws264_pipeline_emits_fmp4(fake_run_cmd, bypass_health, monkeypatch, h264_present):
     """真 ffmpeg：JPEG 帧 → H.264 fMP4 字节流（ftyp/moof box 特征）。"""
+    if shutil.which(cfg.FFMPEG_BIN) is None:
+        pytest.skip("本机无 ffmpeg，跳过真转码用例")
     jpeg = _make_jpeg()
     port = _start_ws_upstream(jpeg)
     monkeypatch.setattr(cfg, "PREVIEW_UPSTREAM_PORT", port)

@@ -21,6 +21,26 @@
     };
   }
 })();
+/* v1.24.5（Q-03）：统一解析 action POST 的响应。
+   会话过期时后端返回 401 + JSON；但若被反代改写或碰上旧版后端，可能返回 200 + 整页
+   登录 HTML。此时 r.json() 抛 SyntaxError，被 .catch 捕获后提示“网络错误”，把
+   “登录已过期”误报成网络故障。这里先看 content-type，非 JSON 一律按会话过期处理。 */
+function _actionJson(r) {
+  var ct = '';
+  try { ct = (r && r.headers && r.headers.get) ? (r.headers.get('content-type') || '') : ''; } catch (e) { ct = ''; }
+  if (ct.indexOf('json') >= 0) { return r.json(); }
+  return r.text().then(function (t) {
+    return {
+      ok: false,
+      err: '登录已过期，请刷新页面重新登录',
+      msg: '登录已过期，请刷新页面重新登录',
+      auth: false,
+      _nonJson: true,
+      _preview: String(t || '').slice(0, 160)
+    };
+  });
+}
+
 /* ===== 主题（默认星铁粉蓝 三月七）===== */
 var THEMES = [
   { name: 'march7', icon: '🎀', label: '星铁粉蓝' },
@@ -213,8 +233,8 @@ function doUpdate() {
   fd.append('action', 'do_update');
   var csrf = document.querySelector('input[name="csrf"]');
   if (csrf) fd.append('csrf', csrf.value);
-  fetch('action', { method:'POST', body: fd })
-    .then(function(r){ return r.json(); })
+  fetch('action', { method:'POST', body: fd, headers: {'Accept': 'application/json'} })
+    .then(_actionJson)
     .then(function(d){
       if (d && d.ok) {
         alert('✅ ' + d.msg);
@@ -279,8 +299,8 @@ function updateAssistantImage(ev) {
   fd.append('action', 'update_image');
   var csrf = document.querySelector('input[name="csrf"]');
   if (csrf) fd.append('csrf', csrf.value);
-  fetch('action', { method:'POST', body: fd })
-    .then(function(r){ return r.json(); })
+  fetch('action', { method:'POST', body: fd, headers: {'Accept': 'application/json'} })
+    .then(_actionJson)
     .then(function(d){
       if (d && d.ok) {
         alert('✅ ' + d.msg);
@@ -318,8 +338,8 @@ function setUpdateMode(mode) {
   fd.append('mode', mode);
   var csrf = document.querySelector('input[name="csrf"]');
   if (csrf) fd.append('csrf', csrf.value);
-  fetch('action', { method:'POST', body: fd })
-    .then(function(r){ return r.json(); })
+  fetch('action', { method:'POST', body: fd, headers: {'Accept': 'application/json'} })
+    .then(_actionJson)
     .then(function(d){
       if (d && d.ok) {
         alert('✅ ' + d.msg);
@@ -336,8 +356,8 @@ function setAfterFinish(v) {
   fd.append('value', v);
   var csrf = document.querySelector('input[name="csrf"]');
   if (csrf) fd.append('csrf', csrf.value);
-  fetch('action', { method:'POST', body: fd })
-    .then(function(r){ return r.json(); })
+  fetch('action', { method:'POST', body: fd, headers: {'Accept': 'application/json'} })
+    .then(_actionJson)
     .then(function(d){
       if (d && d.ok) {
         alert('✅ ' + d.msg);
@@ -365,8 +385,8 @@ function rollbackPanel(file) {
   fd.append('file', file);
   var csrf = document.querySelector('input[name="csrf"]');
   if (csrf) fd.append('csrf', csrf.value);
-  fetch('action', { method:'POST', body: fd })
-    .then(function(r){ return r.json(); })
+  fetch('action', { method:'POST', body: fd, headers: {'Accept': 'application/json'} })
+    .then(_actionJson)
     .then(function(d){
       if (d && d.ok) {
         alert('✅ ' + d.msg);
@@ -417,8 +437,8 @@ function clearHistory() {
   fd.append('action', 'history_clear');
   var csrf = document.querySelector('input[name="csrf"]');
   if (csrf) fd.append('csrf', csrf.value);
-  fetch('action', { method:'POST', body: fd })
-    .then(function(r){ return r.json(); })
+  fetch('action', { method:'POST', body: fd, headers: {'Accept': 'application/json'} })
+    .then(_actionJson)
     .then(function(d){
       if (d && d.ok) {
         alert('✅ ' + d.msg);
@@ -698,8 +718,8 @@ function setMonitorInterval(iv) {
   fd.append('interval', iv);
   var csrf = document.querySelector('input[name="csrf"]');
   if (csrf) fd.append('csrf', csrf.value);
-  fetch('action', { method:'POST', body: fd })
-    .then(function(r){ return r.json(); })
+  fetch('action', { method:'POST', body: fd, headers: {'Accept': 'application/json'} })
+    .then(_actionJson)
     .then(function(d){
       if (d && d.ok) {
         alert('✅ ' + d.msg);
@@ -1495,7 +1515,7 @@ function saveAlert() {
   fd.append('action', 'alert_save');
   _afillAlertForm(fd);
   _acsrf(fd);
-  fetch('action', { method: 'POST', body: fd }).then(function(r) { return r.json(); }).then(function(d) {
+  fetch('action', { method: 'POST', body: fd, headers: {'Accept': 'application/json'} }).then(_actionJson).then(function(d) {
     if (btn) btn.textContent = '💾 保存设置';
     var badge = _ael('alertBadge');
     if (badge && d && d.ok) badge.textContent = _achk('alertEnable') ? '已启用' : '未启用';
@@ -1516,7 +1536,7 @@ function _atestAlert(sev) {
   fd.append('alert_channel', _aval('alertChannel', 'bark'));
   fd.append('alert_target', (_aval('alertTarget') || '').trim());
   _acsrf(fd);
-  fetch('action', { method: 'POST', body: fd }).then(function(r) { return r.json(); }).then(function(d) {
+  fetch('action', { method: 'POST', body: fd, headers: {'Accept': 'application/json'} }).then(_actionJson).then(function(d) {
     if (btn) btn.textContent = '📤 发送测试';
     miniToast(d && d.ok ? ('测试消息已发出（' + sev + ' 级），去手机上看一眼')
                         : ('发送失败：' + (d && d.msg ? d.msg : '请检查配置')));
@@ -1530,7 +1550,7 @@ function _aalertNow(action, okTip) {
   fd.append('action', action);
   _acsrf(fd);
   miniToast('处理中…');
-  fetch('action', { method: 'POST', body: fd }).then(function(r) { return r.json(); }).then(function(d) {
+  fetch('action', { method: 'POST', body: fd, headers: {'Accept': 'application/json'} }).then(_actionJson).then(function(d) {
     miniToast(d && d.ok ? (d.msg || okTip) : ('失败：' + (d && d.msg ? d.msg : '未知错误')));
   }).catch(function() { miniToast('失败：网络错误'); });
 }
@@ -1541,7 +1561,7 @@ function checkUpstreamNow() {
   fd.append('action', 'upstream_check_now');
   _acsrf(fd);
   miniToast('检查中…');
-  fetch('action', { method: 'POST', body: fd }).then(function(r) { return r.json(); }).then(function(d) {
+  fetch('action', { method: 'POST', body: fd, headers: {'Accept': 'application/json'} }).then(_actionJson).then(function(d) {
     miniToast(d && d.ok ? (d.msg || '检查完成') : ('失败：' + (d && d.msg ? d.msg : '未知错误')));
     if (d && d.ok) setTimeout(function() { location.reload(); }, 1200);
   }).catch(function() { miniToast('失败：网络错误'); });

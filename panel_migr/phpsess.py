@@ -241,8 +241,17 @@ def _update_session_file(path: Path, mutate, *, create: bool = True) -> bool:
 
 
 def new_sid() -> str:
-    """生成 PHP 8 风格 session id（32 位 [a-zA-Z0-9,-]），与 _SID_RE 兼容。"""
-    alphabet = string.ascii_letters + string.digits + ",-"
+    """生成 PHP 8 风格 session id（32 位 [a-zA-Z0-9-]）。
+
+    v1.24.5（Q-07）：**不再使用逗号**。PHP 8 的字母表是 [a-zA-Z0-9,-]，但 RFC 6265
+    的 cookie-octet 不允许 `,`（0x2C），Starlette 只能把它转义成 `\\054` 并给整个值
+    加双引号下发：`PHPSESSID="xxx\\054yyy"`。这在浏览器/curl 上碰巧能用，但严格按
+    RFC 实现的客户端会拒绝或截断，部分反代/WAF 也会误判。去掉逗号后字母表仍是
+    PHP 8 字符集的子集，会话 id 依旧兼容 PHP 侧 sess_ 文件命名。
+
+    `_SID_RE` 保留逗号，以便继续接受升级前下发的历史会话（那些 id 含逗号）。
+    """
+    alphabet = string.ascii_letters + string.digits + "-"
     return "".join(secrets.choice(alphabet) for _ in range(32))
 
 
