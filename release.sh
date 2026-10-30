@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# m7a_panel V1.24.4 打包 + 发布脚本（分步执行，每步都可单独跑）
+# m7a_panel V1.24.5 打包 + 发布脚本（分步执行，每步都可单独跑）
 #
 # 用法：
 #   bash release.sh check          # 发版前检查（版本三处一致 / 语法 / 测试）
@@ -7,13 +7,13 @@
 #   bash release.sh page           # 生成下载页 index.html
 #   bash release.sh serve          # 起公网下载服务（18090）
 #   bash release.sh push  <PAT>    # 提交 + 推送 + 打 tag（需 PAT）
-#   bash release.sh ghrel <PAT>    # 建 GitHub Release 并上传资产（需 PAT）
+#   bash release.sh ghrel <PAT>    # 建 GitHub Release 并上传三个资产（需 PAT）
 #
 set -u
 ROOT=/home/huangsongping/dsh-workspace/m7a-fix
 DL=/home/huangsongping/dsh-workspace/m7a-dl
 AUD=/home/huangsongping/dsh-workspace/m7a-audit
-VER=1.24.4
+VER=1.24.5
 TAG=V${VER}
 REPO=Starchaser-Cyber/march7th-assistant-web-management-panel-python-remake
 PY=/tmp/auditvenv/bin/python
@@ -48,15 +48,21 @@ cmd_package() {
   echo
   echo "=== 审计报告全文 ==="
   "$PY" - "$AUD" "$DL/m7a-audit-report.zip" <<'PYEOF'
-import sys, zipfile
+import sys, time, zipfile
 from pathlib import Path
 src, out = Path(sys.argv[1]), Path(sys.argv[2])
-files = ["00_SUMMARY.md", "A_update.md", "B_auth.md", "C_services.md", "D_handlers.md", "AUDIT_INFO.md"]
+files = ["00_SUMMARY.md", "AUDIT_INFO.md", "AUDIT_INFO_V1.24.4.md",
+         "A_update.md", "B_auth.md", "C_services.md", "D_handlers.md",
+         "E_v1244_代码质量审计报告.md"]
+dt = time.localtime()[:6]
 with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
     for n in files:
         p = src / n
         if p.is_file():
-            zf.write(p, "m7a-audit/" + n)
+            zi = zipfile.ZipInfo("m7a-audit/" + n, date_time=dt)
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            zi.external_attr = (0o644 & 0xFFFF) << 16
+            zf.writestr(zi, p.read_bytes())
 print("审计报告包：%s (%d B)" % (out, out.stat().st_size))
 PYEOF
   echo
@@ -86,8 +92,8 @@ def info(name):
         sha=hashlib.sha256(p.read_bytes()).hexdigest(),
     )
 
-rel = info("V1.24.4.zip")
-aud = info("V1.24.4-audit.zip")
+rel = info("V1.24.5.zip")
+aud = info("V1.24.5-audit.zip")
 rpt = info("m7a-audit-report.zip")
 html = (tpl
     .replace("__REL_SIZE__", rel["size"]).replace("__REL_COUNT__", rel["count"]).replace("__REL_SHA__", rel["sha"])
@@ -119,22 +125,7 @@ cmd_push() {
   echo "=== 待提交文件 ==="
   git status --short
   echo
-  git add -A
-  git -c user.name="Starchaser-Cyber" -c user.email="starchaser-cyber@users.noreply.github.com" \
-      commit -m "fix(V1.24.4): 修复审计发现的 6 个 P0 与 25 个 P1 缺陷
-
-- P0: 配置页多行值写坏 config.yaml；更新回滚失败吞异常并删旧代码；
-  在线更新自重启时序死锁；告警静默期吞掉 down 边沿导致永久不告警；
-  alert_state 无锁并发覆盖；健康探测端口硬编码 9999
-- P1: CSRF 空 token 绕过、全局登录锁 DoS、session 无锁/O_NOFOLLOW、
-  非面板路径全 500、计划任务 cron 用错 key 通道、事件循环被阻塞、
-  备份含 session 复活已注销会话、镜像检查头前缀与时间解析、
-  发布包层级校验、zip bomb 防护、YAML 校验、inst_dir 校验、
-  websockets 依赖缺失等 18 项
-- 新增针对性回归测试；文档同步" || die "commit 失败"
-  echo
-  git --no-pager show --stat HEAD | head -40
-  echo
+  echo "（本脚本不执行 git add -A；提交请按 RELEASE.md 逐项 add）"
   echo "=== 推送 main ==="
   git push "https://${PAT}@github.com/${REPO}.git" HEAD:main || die "push 失败"
   echo
@@ -147,8 +138,9 @@ cmd_push() {
 cmd_ghrel() {
   PAT="${1:-}"; [ -n "$PAT" ] || die "用法：release.sh ghrel <PAT>"
   cd "$DL" || die "下载目录不存在"
-  ZIP="$DL/${TAG}.zip"
-  [ -f "$ZIP" ] || die "找不到 $ZIP，先跑 package"
+  for f in "${TAG}.zip" "${TAG}-audit.zip" "m7a-audit-report.zip"; do
+    [ -f "$DL/$f" ] || die "找不到 $DL/$f，先跑 package"
+  done
   NOTES="$DL/release_notes.md"
   [ -f "$NOTES" ] || die "找不到 $NOTES"
 
@@ -176,28 +168,35 @@ PYEOF
   RID=$(cat /tmp/m7a_rid.txt) || die "没拿到 release id"
   echo "RID=$RID"
 
-  echo "=== 上传资产 ${TAG}.zip ==="
-  "$PY" - "$PAT" "$REPO" "$RID" "$ZIP" "$TAG" <<'PYEOF'
-import hashlib, json, sys, urllib.request
-pat, repo, rid, path, tag = sys.argv[1:6]
+  for asset in "${TAG}.zip" "${TAG}-audit.zip" "m7a-audit-report.zip"; do
+    echo
+    echo "=== 上传资产 $asset ==="
+    "$PY" - "$PAT" "$REPO" "$RID" "$DL/$asset" <<'PYEOF'
+import hashlib, json, sys, urllib.parse, urllib.request
+pat, repo, rid, path = sys.argv[1:5]
+name = path.rsplit("/", 1)[-1]
 data = open(path, "rb").read()
 local = hashlib.sha256(data).hexdigest()
+url = "https://uploads.github.com/repos/%s/releases/%s/assets?name=%s" % (
+    repo, rid, urllib.parse.quote(name))
 req = urllib.request.Request(
-    "https://uploads.github.com/repos/%s/releases/%s/assets?name=%s.zip" % (repo, rid, tag),
-    data=data,
+    url, data=data,
     headers={"Authorization": "Bearer " + pat, "Content-Type": "application/zip"}, method="POST")
 try:
-    with urllib.request.urlopen(req, timeout=600) as r:
+    with urllib.request.urlopen(req, timeout=900) as r:
         j = json.load(r)
 except urllib.error.HTTPError as e:
     print("HTTP %s: %s" % (e.code, e.read().decode("utf-8", "replace")[:800]))
     sys.exit(1)
 remote = (j.get("digest") or "").replace("sha256:", "")
+print("文件        :", name)
+print("大小        :", "{:,} B".format(len(data)))
 print("本地 sha256 :", local)
 print("远端 digest :", remote or "（API 未返回）")
 print("一致        :", "是" if remote == local else ("无法核对" if not remote else "否 ⚠️"))
 print("下载地址    :", j.get("browser_download_url"))
 PYEOF
+  done
 }
 
 case "${1:-}" in
