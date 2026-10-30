@@ -9,6 +9,7 @@ data/
 backups/
 sessions/
 *.log
+.image_check_cache.json
 *.sqlite
 *.bak
 *.bak.*

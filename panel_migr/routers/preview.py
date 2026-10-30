@@ -175,10 +175,13 @@ async def ws_h264(websocket) -> None:
         # stdout EOF 通常意味着 ffmpeg 正在退出：先给 drain 最多 1s 把 stderr 收尾，
         # 否则紧跟的 cancel 会让 err_tail 为空、拿不到 exit 原因。
         if not drain.done():
+            # 清理类：只给 drain 最多 1s 收尾，超时/任务自身异常都不该影响退出流程。
+            # 原写法 `except (asyncio.TimeoutError, Exception)` 冗余（TimeoutError
+            # 本身就是 Exception 子类，ruff UP041），这里收敛为 Exception + debug。
             try:
                 await asyncio.wait_for(asyncio.shield(drain), timeout=1.0)
-            except (asyncio.TimeoutError, Exception):
-                pass
+            except Exception:
+                log.debug("ws264: drain 收尾未完成（超时或异常）", exc_info=True)
         for t in tasks:
             if not t.done():
                 t.cancel()
@@ -187,7 +190,8 @@ async def ws_h264(websocket) -> None:
         try:
             await upstream.close()
         except Exception:
-            pass
+            # 清理类：上游可能已断，close 失败无需上抛（否则会盖掉真实退出原因）。
+            log.debug("ws264: 关闭上游 websocket 失败", exc_info=True)
         # 先给 ffmpeg 自然退出的机会（stdin 已关 → 编完剩余帧后 exit 0）
         rc = proc.returncode
         if rc is None:
@@ -200,11 +204,13 @@ async def ws_h264(websocket) -> None:
             try:
                 proc.kill()
             except ProcessLookupError:
-                pass
+                # 竞态：ffmpeg 在 kill 前刚好自己退出，属正常路径，不是错误。
+                log.debug("ws264: ffmpeg 已自行退出，kill 落空")
             try:
                 await proc.wait()
             except Exception:
-                pass
+                # 清理类：只等进程回收，等不到也不该影响后面的退出原因判定。
+                log.debug("ws264: 等待 ffmpeg 回收失败", exc_info=True)
         reason = ""
         if not killed and rc not in (0, None):
             reason = _exit_reason(rc, err_tail)
@@ -290,8 +296,6 @@ async def _watch_client(websocket) -> None:
 
 async def _relay(websocket, ws_url: str) -> None:
     """双向字节泵：浏览器 WebSocket ↔ 容器 preview_server。"""
-    from starlette.websockets import WebSocketState
-
     try:
         import websockets
 
@@ -334,7 +338,8 @@ async def _close(websocket, code: int, reason: str) -> None:
                 try:
                     await websocket.send_text(json.dumps({"error": reason}, ensure_ascii=False))
                 except Exception:
-                    pass
+                    # 清理类：客户端可能已经走了，错误帧发不出去不影响关闭流程。
+                    log.debug("ws264: 发送错误帧失败（客户端可能已断开）", exc_info=True)
             await websocket.close(code=code, reason=reason[:120] or None)
     except Exception:
         pass

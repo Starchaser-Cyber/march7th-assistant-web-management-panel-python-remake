@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 
 from fastapi import WebSocket
@@ -16,6 +17,8 @@ from starlette.websockets import WebSocketState
 from phpsess import is_auth, load_session
 from services import eventdb, events
 from services.instances import instance_current
+
+log = logging.getLogger(__name__)
 
 
 def h_alert_history(request) -> dict:
@@ -133,4 +136,6 @@ async def ws_events(websocket: WebSocket) -> None:
             try:
                 await websocket.close(code=1000)
             except Exception:
-                pass
+                # 清理类：连接可能已被对端关闭（client_state 与真实链路有竞态），
+                # close 失败不该让 finally 抛出、盖掉 sender/receiver 的真实异常。
+                log.debug("m7a-events: 关闭 WS 失败（对端可能已断开）", exc_info=True)

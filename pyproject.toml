@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "m7a-panel"
+version = "1.24.7"
+description = "M7A 云游戏容器管理面板（Python 迁移版，FastAPI + 原生 JS）"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "GPL-3.0-only" }   # 与仓库根 LICENSE 一致（GNU GPL v3）
+authors = [{ name = "m7a_panel contributors" }]
+keywords = ["m7a", "panel", "fastapi", "docker", "cloud-game"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Framework :: FastAPI",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: POSIX :: Linux",
+]
+
+# 运行依赖与 panel_migr/requirements.txt 保持一致；改一处必须同步改另一处。
+# 下限都是「已修复已知 CVE 的安全版本」，不要随手下调。
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "httpx>=0.27",
+    "bcrypt>=4.1",
+    "python-multipart>=0.0.18",
+    "jinja2>=3.1.6",
+    "websockets>=12",
+]
+
+[project.optional-dependencies]
+# CI 与本地开发用：pytest 跑测试，ruff 做静态检查。
+# pyyaml 仅测试用：P0-1 回归要用 yaml.safe_load 证明「两轮保存后 config.yaml 仍是
+# 合法 YAML」，生产代码里**不** import pyyaml（解析走自带的 yaml_read_simple）。
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "pyyaml>=6",
+]
+
+[project.urls]
+Repository = "https://github.com/Starchaser-Cyber/march7th-assistant-web-management-panel-python-remake"
+Documentation = "https://github.com/Starchaser-Cyber/march7th-assistant-web-management-panel-python-remake#readme"
+
+# ---- 工具配置 ----
+# 说明：项目实际运行根目录是 panel_migr/（config.py 在这里按相对路径找 data/、
+# templates/、static/），本文件只用于声明依赖与工具行为，不做 `pip install -e .`
+# 安装（那样会把 config.py 这个顶层模块名装进 site-packages，与运行期 sys.path
+# 冲突）。CI 里用 `pip install -r panel_migr/requirements.txt` 装依赖。
+
+[tool.pytest.ini_options]
+testpaths = ["panel_migr/tests"]
+# --strict-markers：marker 拼写错误直接报错，不被静默忽略。
+# 注意：M7A_EVENTS_BG=0 由 tests/conftest.py 在导入 app 前设置（不依赖 pytest-env 插件），
+# CI 里也显式导出该变量，双重保险。
+addopts = "--strict-markers"
+markers = [
+    "slow: 耗时较长的用例（网络/子进程），本地可用 -m 'not slow' 跳过",
+]
+
+[tool.setuptools]
+# 不打包：运行方式是「整目录同步到服务器」，见 release.sh / build_package.py
+py-modules = []

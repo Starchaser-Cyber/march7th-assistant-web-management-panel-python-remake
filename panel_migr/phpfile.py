@@ -9,9 +9,12 @@ php-cli 不可用时（本地开发/测试）退回纯 Python 解析器，只支
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
+
+log = logging.getLogger("m7a.phpfile")
 
 _cache: dict[str, tuple[float, object]] = {}
 
@@ -72,10 +75,12 @@ def atomic_write_text(path, text: str, encoding: str = "utf-8", mode: int | None
         if mode is not None:
             _os.chmod(path, mode)
     except OSError:
+        # 清理类：临时文件删不掉不影响主流程（原异常马上 re-raise），
+        # 但留 debug 痕迹便于排查「.tmp_ 残留」问题。
         try:
             _os.unlink(tmp)
         except OSError:
-            pass
+            log.debug("phpfile: 清理临时文件失败 %s", tmp, exc_info=True)
         raise
 
 
@@ -86,7 +91,11 @@ _TOKEN_RE = re.compile(
     r"'(?P<squote>(?:[^'\\]|\\.)*)'"
     r'|"(?P<dquote>(?:[^"\\]|\\.)*)"'
     r"|(?P<true>true)\b|(?P<false>false)\b|(?P<null>NULL)\b"
-    r"|(?P<int>-?\d+)\b|(?P<float>-?\d+\.\d+)"
+    # v1.24.7：float 必须排在 int **之前**。正则 alternation 从左到右取第一个
+    # 能匹配的分支，`-?\d+\b` 会把 "1.5" 吃成 int 1（随后解析在 '.' 处失败，
+    # 整个数组都读不出来）→ 浮点写得出（dump 用 repr）却读不回来，读写不对称。
+    # `-?\d+\.\d+` 更长更具体，先匹配；纯整数仍落回 int 分支。
+    r"|(?P<float>-?\d+\.\d+)|(?P<int>-?\d+)\b"
     r"|(?P<arr>array\s*\(|\[)"
     r"|(?P<key>=>)"
     r"|(?P<comma>,)"

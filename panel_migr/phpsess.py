@@ -6,6 +6,7 @@ PHP files handler 序列化格式（php 样式）：`key|<serialized>` 依次连
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 import secrets
@@ -15,6 +16,8 @@ import threading
 from pathlib import Path
 
 from config import SESSION_FILE_MODE, SESSION_SAVE_PATH, SKEY
+
+log = logging.getLogger("m7a.phpsess")
 
 _SID_RE = re.compile(r"[A-Za-z0-9,\-]{1,128}")
 
@@ -165,7 +168,7 @@ def _read_all(fd: int) -> str:
 def _update_session_file(path: Path, mutate, *, create: bool = True) -> bool:
     """在**排他锁内**完成 session 文件的读-改-写，返回是否成功。
 
-    v1.24.4 修复（P1-11 / 审计 B-03）：旧实现是「read_text 整个文件 → 改 → 
+    v1.24.4 修复（P1-11 / 审计 B-03）：旧实现是「read_text 整个文件 → 改 →
     O_TRUNC 写回」，全程无锁。并发下两个请求各读一份旧文本、各自写回，后写者
     把先写者的改动整体覆盖 —— 实测「登出后 auth 键复活」（登出请求删掉 auth，
     并发的另一请求用旧快照把它写回来 → 已登出的会话重新变成管理员）。
@@ -234,10 +237,12 @@ def _update_session_file(path: Path, mutate, *, create: bool = True) -> bool:
         except OSError:
             return False
         finally:
+            # 清理类：fd 已经用完了，关不掉（EBADF/EIO）不影响返回结果，
+            # 但 debug 留痕便于发现 fd 泄漏。
             try:
                 os.close(fd)
             except OSError:
-                pass
+                log.debug("phpsess: 关闭 session fd 失败 %s", path, exc_info=True)
 
 
 def new_sid() -> str:

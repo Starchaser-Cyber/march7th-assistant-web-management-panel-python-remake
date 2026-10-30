@@ -4,8 +4,8 @@
 
 ![许可证](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Python 版本](https://img.shields.io/badge/python-3.11%2B-green)
-![最新版本](https://img.shields.io/badge/version-V1.24.6-orange)
-![构建状态](https://img.shields.io/badge/build-582%20tests-brightgreen)
+![最新版本](https://img.shields.io/badge/version-V1.24.7-orange)
+![构建状态](https://img.shields.io/badge/build-1%2C207%20tests-brightgreen)
 ![Stars](https://img.shields.io/github/stars/Starchaser-Cyber/march7th-assistant-web-management-panel-python-remake?style=flat)
 
 ---
@@ -602,14 +602,14 @@ journalctl -u m7a-panel -f      # 实时查看面板日志
     │   ├── panel.py               #     页面渲染与兜底
     │   ├── events.py              #     WebSocket 事件流
     │   └── preview.py             #     游戏画面预览帧流反代
-    ├── services/                  #   业务逻辑层（25 个 Python 模块）
+    ├── services/                  #   业务逻辑层（24 个模块 + updateops/ 包）
     │   ├── monitor.py             #     监控采样与历史（原子写）
     │   ├── sysmetrics.py          #     零 fork 指标直读（cgroup / Engine API）
     │   ├── containers.py          #     Docker 实例管理
     │   ├── schedule.py            #     计划任务
     │   ├── alerts.py              #     告警状态机（分级 / 静默 / 重试）
     │   ├── preview.py             #     预览令牌与帧源解析、编码器探测
-    │   ├── updateops.py           #     面板自更新 / 备份 / 回滚
+    │   ├── updateops/             #     面板自更新 / 备份 / 回滚（v1.24.7 拆包，12 个模块）
     │   ├── configops.py           #     config.yaml 读写
     │   └── ...                    #     日志、历史、事件库、配置等
     ├── templates/panel.html.j2    #   Jinja2 页面模板
@@ -617,7 +617,7 @@ journalctl -u m7a-panel -f      # 实时查看面板日志
     │   ├── panel.css / panel.js   #     样式与逻辑（原生 JS，零构建）
     │   └── vendor/echarts.min.js  #     图表库随包分发（不依赖公共 CDN）
     ├── scripts/                   #   辅助脚本
-    └── tests/                     #   pytest 测试（582 用例）
+    └── tests/                     #   pytest 测试（1,066 用例）
 ```
 
 > `.panel_pass.php`、`.env`、`data/`、`sessions/`、`backups/`、`*.log` 等运行时与敏感文件已被 `.gitignore` 排除，不会进入版本库。

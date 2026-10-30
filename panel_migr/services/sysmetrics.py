@@ -20,7 +20,7 @@ import os
 import re
 import socket
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 DOCKER_SOCK = os.environ.get("M7A_DOCKER_SOCK", "/var/run/docker.sock")
@@ -39,7 +39,7 @@ def sock_json(path: str, timeout: float = 3.0):
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         s.settimeout(timeout)
         s.connect(DOCKER_SOCK)
-        s.sendall(f"GET {path} HTTP/1.1\r\nHost: docker\r\nConnection: close\r\n\r\n".encode("utf-8"))
+        s.sendall(f"GET {path} HTTP/1.1\r\nHost: docker\r\nConnection: close\r\n\r\n".encode())
         while True:
             chunk = s.recv(65536)
             if not chunk:
@@ -68,7 +68,7 @@ def _epoch(iso) -> int:
         return 0
     try:
         ts = int(datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S")
-                  .replace(tzinfo=timezone.utc).timestamp())
+                  .replace(tzinfo=UTC).timestamp())
     except ValueError:
         return 0
     return ts if ts > 0 else 0

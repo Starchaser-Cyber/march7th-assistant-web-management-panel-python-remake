@@ -1,5 +1,31 @@
 # Changelog
 
+## V1.24.7（2026-10-30）
+
+**一句话总结**：一次纯内部质量优化——首屏传输量从 1.31 MB 降到 78 KB（-94%），`services/updateops.py` 从 1,894 行拆成 12 个模块，测试从 582 项增到 1,207 项、覆盖率从 73% 升到 84%，并补齐 `pyproject.toml` / `ruff.toml` / GitHub Actions CI 与一键发版脚本。**功能与界面无任何变化**，升级后行为与 V1.24.6 完全一致。
+
+⚡ 优化
+
+- **首屏快 16 倍**：此前 `/static/vendor/echarts.min.js`（1,024,740 B）在初始化时无条件加载，加上未压缩的 HTML/CSS/JS，首屏合计 1,368,861 B。现在：① 注册 `GZipMiddleware`，文本资源压缩率 70%+；② 静态资源带 `Cache-Control: public, max-age=31536000, immutable` 与 `?v=版本号`，回访不再重复下载；③ echarts 改为进入监控页才加载（`IntersectionObserver` 预判 + 加载状态机 + 失败降级提示）。实测首屏三件套 **78,308 B**，含图表库 **402,254 B**
+- **`services/updateops.py` 拆包**：1,894 行 / 54 函数 / 单文件 CC 峰值 32 的单文件拆成 `services/updateops/` 包（12 个模块，最大 304 行）：`http` / `version` / `release` / `zipops` / `runtime` / `swap` / `restart` / `backups` / `ghcr` / `orchestrate`。对外 API 一字未变（`from services.updateops import do_update` 等 91 个名字全部保持），并新增 `_rt.py` 兼容层保证既有 `monkeypatch.setattr(U, "http_get", ...)` 类测试继续生效
+- **削平复杂度热点**：`_process_pending` 91 行 / CC 42 → 37 行 / CC 6；`alert_tick` 145 行 / CC 45 → 80 行 / CC 11；`panel_doctor` 129 行 / CC 35 → 5 行 / CC 2（改注册表驱动）；`morning_report_body` 96 行 / CC 30 → 48 行 / CC 9；`_do_update_locked` CC 32 → 5；`_restore_old` CC 27 → 7
+- **清技术债**：合并 3 组完全重复的函数（`_inst` / `_to_int` / `_fmt_duration`）；清掉 21 处未使用 import；73 处 `except: pass` 逐处分类处理——只有 1 处业务巡检改为 `log.warning`，其余清理类保留静默但加 `log.debug(exc_info=True)` 并把宽泛 `Exception` 收窄到具体类型
+- **补测试盲区**：新增 12 个测试文件、625 项用例。`routers/panel.py` 46%→100%、`services/flash.py` 34%→100%、`phpfile.py` 42%→95%、`services/sampler.py` 31%→98%、`services/passwd.py` 48%→100%、`services/schedule.py` 54%→99%、`gateway.py` 30%→100%、`services/shell.py` 55%→100%、`services/containers.py` 54%→97%、`services/updateops/*` 从 29~67% 提到 83%+。整体 **73% → 84%**
+- **工程配置**：新增 `pyproject.toml`（项目元数据 + 依赖 + pytest 配置）、`ruff.toml`（唯一静态检查配置源，规则与忽略项逐条注明理由）、`.github/workflows/ci.yml`（ruff + py3.11/3.12 双版本 pytest，`M7A_EVENTS_BG=0`）、`release.sh`（`check`/`package`/`page`/`serve`/`push`/`ghrel` 六个子命令，打包 + 建 Release + 核 digest 一条龙）
+
+🐛 修复
+
+- **`phpfile.py` 纯 Python 回退解析器读不出浮点数**：正则里 `int` 分支排在 `float` 之前，`1.5` 被吃成 `1`，`array('f' => 1.5)` 整个解析失败并回落默认值。已在没有 `php` 命令的环境下影响 `config.yaml` 读取精度
+- **`set_pass()` 超 72 字节密码抛异常**：bcrypt 有 72 字节上限，此前直接抛 `ValueError` 穿过无 try 的 `h_setup_pass` 变成 500。现在统一返回 `False`（**绝不静默截断**——截断会让前 72 字节相同的两个不同密码互相通过），并在 `routers/write.py` 表单层前置拦截给出可读提示
+- **`h_restore_config` 写 `config.yaml` 非原子**：改为原子写（保留原文件 mode），避免写入中途断电留下半截配置
+- **后台采样不跟随实例切换**（审计 C-P2-8）：`services/sampler.py` 的 runner 只在首次拿到实例，之后永久缓存 → 切换默认实例后采样/告警/日志流仍打旧实例，直到进程重启。改为每 10 秒重读一次
+
+> ⚠️ 升级提示：本版**不改动** `data/`、`backups/`、`sessions/` 的任何格式，也不改登录态与配置文件格式，可直接覆盖升级。唯一行为差异是 `config.yaml` 的写入变原子、`set_pass` 超长密码返回失败而非 500，正常使用无感。
+
+> 🛡️ 安全提示：更新包下载后请核对 Release 页面提供的 SHA-256；请勿从第三方转存站下载，面板只从官方 Release 校验并安装。
+
+---
+
 ## V1.24.6（2026-10-30）
 
 **一句话总结**：修复一处会让「在线更新」100% 失败的资产选择缺陷——Release 同时挂发布包与审计包时，面板会误挑审计包去更新，结构校验必然不通过；本版修正判据并补齐 16 项回归测试。

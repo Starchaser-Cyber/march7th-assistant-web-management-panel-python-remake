@@ -54,16 +54,45 @@ def sticky_dir(tmp_path, monkeypatch):
     return d
 
 
+def _is_foreign(f: Path) -> bool:
+    """文件属主是否真的不是本进程（内核 protected_regular 只在此时生效）。"""
+    try:
+        return f.stat().st_uid != os.getuid()
+    except OSError:
+        return False
+
+
 def _foreign_file(d: Path, sid: str, text: str, mode: int) -> Path:
-    """在 sticky 目录里造一个「非目录属主」的会话文件（等价 PHP 建的 www 文件）。"""
+    """在 sticky 目录里造一个「非目录属主」的会话文件（等价 PHP 建的 www 文件）。
+
+    v1.24.7：补前置条件说明。`os.chown` 在非 root 下只有两种结局：
+    - 目标 uid 不是自己 → `PermissionError`；
+    - 目标 uid 就是自己（本机测试用户 uid=1000 == OTHER_UID）→ **静默成功但
+      属主不变**，文件仍是「自己的」，内核的 sticky+protected_regular 保护不触发。
+
+    旧实现只 catch 异常，漏掉了第二种（空操作）情形。本函数保持宽松（尽力造文件，
+    造不出他人属主也返回），由**需要该前置条件的用例**用 `_is_foreign()` 自行
+    判定并 skip——这样不依赖他人属主的用例（session_set/remove 的读写逻辑）
+    仍能继续跑，不会被一并跳过。
+    """
     f = d / f"sess_{sid}"
     f.write_text(text, encoding="utf-8")
     try:
         os.chown(f, OTHER_UID, OTHER_UID)
     except (PermissionError, OSError):
-        pytest.skip("需要 root chown 才能复现他人属主文件")
+        pass          # 非 root 且目标 uid 不是自己；由调用方决定是否 skip
     f.chmod(mode)
     return f
+
+
+def _require_foreign(f: Path) -> None:
+    """前置条件：必须是「他人属主」文件，否则内核保护无从复现。"""
+    if not _is_foreign(f):
+        pytest.skip(
+            f"造不出「他人属主」文件：chown 到 uid={OTHER_UID} 后属主仍是本进程 "
+            f"uid={os.getuid()}（非 root 只能 chown 给自己），"
+            "无法复现 fs.protected_regular 内核保护"
+        )
 
 
 # ---------- 1. 基础：新建 / 改写 / 删除 ----------
@@ -111,6 +140,7 @@ def test_kernel_guard_blocks_ocreate_reference(sticky_dir):
     if not _protected():
         pytest.skip("fs.protected_regular != 2，本环境不复现内核保护")
     f = _foreign_file(sticky_dir, "guardref", "m7a_panel_auth|b:1;", 0o600)
+    _require_foreign(f)
     with pytest.raises(PermissionError):
         f.write_text("x", "utf-8")                       # O_CREAT|O_TRUNC → EACCES
     assert f.read_text("utf-8") == "m7a_panel_auth|b:1;"  # 文件未被改动

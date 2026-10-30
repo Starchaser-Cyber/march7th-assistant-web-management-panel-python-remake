@@ -13,7 +13,7 @@ import json
 import struct
 import zlib
 
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import Response
 
 # 面板品牌色（与模板 theme-color 一致）
 _THEME_COLOR = "#ec4899"

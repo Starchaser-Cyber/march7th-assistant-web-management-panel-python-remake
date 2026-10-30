@@ -10,6 +10,7 @@ import re
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, Response
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.websockets import WebSocketState
 
 import config
@@ -21,14 +22,39 @@ from routers.write import handle_post
 
 app = FastAPI(title="m7a_panel (python)", version=config.PANEL_VERSION)
 
+# v1.24.7 首屏性能：全站 GZip。面板首屏 HTML 约 190 KB、panel.js 约 92 KB，
+# 纯文本压缩比约 3.4x；未压缩时首屏四件套 1.37 MB，移动网络下要等数秒。
+# minimum_size 取 1000 B：更小的响应（短 JSON 回执）压缩收益不抵头部开销。
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 # M5-B：面板静态资产由 Python 直接服务（须注册在 catch_all 通配之前）
 from pathlib import Path as _Path
 
 from starlette.staticfiles import StaticFiles as _StaticFiles
 
+
+class _CachedStaticFiles(_StaticFiles):
+    """静态资产带强缓存（v1.24.7 首屏性能）。
+
+    资源文件名固定（panel.js / panel.css / vendor/echarts.min.js），升级版本时
+    文件名不变，所以必须靠 URL 上的 `?v=<PANEL_VERSION>` 查询串破缓存 ——
+    模板已给 css/js 加版本串，echarts 由 panel.js 的 loadECharts 动态加。
+    有了版本串，这里才敢用 max-age=31536000 + immutable：一年内命中缓存连
+    条件请求都不发，省掉一次 RTT。
+    """
+
+    cache_control = "public, max-age=31536000, immutable"
+
+    def file_response(self, full_path, stat_result, scope, status_code: int = 200):
+        response = super().file_response(full_path, stat_result, scope, status_code)
+        # 304 Not Modified 也要带上，否则浏览器下次仍会发条件请求
+        response.headers["Cache-Control"] = self.cache_control
+        return response
+
+
 app.mount(
     "/static",
-    _StaticFiles(directory=_Path(__file__).resolve().parent / "static"),
+    _CachedStaticFiles(directory=_Path(__file__).resolve().parent / "static"),
     name="static",
 )
 

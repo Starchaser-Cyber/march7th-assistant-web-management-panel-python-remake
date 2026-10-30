@@ -16,14 +16,13 @@ from services import eventdb, history
 MAX_DAYS = 30
 DEFAULT_DAYS = 30
 
-
-def _fmt_duration(seconds) -> str:
-    s = max(0, int(seconds or 0))
-    if s >= 3600:
-        return f"{s // 3600} 小时 {s % 3600 // 60} 分"
-    if s >= 60:
-        return f"{s // 60} 分 {s % 60} 秒"
-    return f"{s} 秒"
+# v1.24.7（方向E）：本文件原有一份与 services/history.py:format_duration 逐字节
+# 相同的实现。任务书建议保留 stats 侧、让 history 反过来 import —— 但那是循环
+# import（stats 在模块级就 `from services import history`），所以方向取反：
+# 以 history.format_duration 为唯一实现，这里只做别名。
+# 行为完全一致（3600/60 两级进位、负数与 None 归 0），有
+# tests/test_v1247_cleanup.py 的等价性测试兜底。
+_fmt_duration = history.format_duration
 
 
 def _clamp_days(days) -> int:

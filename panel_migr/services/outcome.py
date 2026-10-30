@@ -160,6 +160,49 @@ def _day_start(ts: float | None = None) -> int:
 _WD = ["日", "一", "二", "三", "四", "五", "六"]
 
 
+def _empty_day_bucket(day: datetime, is_today: bool) -> dict:
+    """单日聚合桶的初始形态（字段名被模板/前端直接消费，不可改）。"""
+    key = day.strftime("%Y-%m-%d")
+    return {
+        "date": day.strftime("%m-%d"), "key": key, "wd": _WD[day.isoweekday() % 7],
+        "today": is_today, "tasks": 0, "score": 0, "dungeon": 0,
+        "modes": [], "notes": [], "stamina": None, "stamina_total": None,
+    }
+
+
+def _accumulate_into_bucket(b: dict, oc: dict) -> None:
+    """把一条 outcome 事件并入单日桶（就地修改）。"""
+    b["tasks"] += 1
+    b["score"] += int(oc.get("score") or 0)
+    b["dungeon"] += int(oc.get("dungeon") or 0)
+    if oc.get("stamina") is not None:
+        b["stamina"] = int(oc.get("stamina"))
+        b["stamina_total"] = int(oc.get("stamina_total") or 0)
+    for m in (oc.get("modes") or []):
+        if m not in b["modes"]:
+            b["modes"].append(m)
+    for n in (oc.get("notes") or []):
+        if n not in b["notes"]:
+            b["notes"].append(n)
+
+
+def _summarize_days(day_list: list[dict], days: int) -> dict:
+    """把日桶列表汇总成对外的返回结构。"""
+    today = day_list[-1] if day_list else None
+    return {
+        "range_days": days,
+        "today": today,
+        "list": day_list,
+        "total_tasks": sum(d["tasks"] for d in day_list),
+        "has_data": bool(today and today["tasks"] > 0),
+        "week": {
+            "tasks": sum(d["tasks"] for d in day_list),
+            "score": sum(d["score"] for d in day_list),
+            "dungeon": sum(d["dungeon"] for d in day_list),
+        },
+    }
+
+
 def outcome_daily(inst: dict, days: int = 7, now: int | None = None) -> dict:
     """近 N 天收益汇总（含今日卡）。数据源：events(type="outcome")。"""
     from services import eventdb
@@ -177,12 +220,7 @@ def outcome_daily(inst: dict, days: int = 7, now: int | None = None) -> dict:
     buckets: dict = {}
     for i in range(days - 1, -1, -1):
         day = datetime.fromtimestamp(today0 - i * 86400)
-        key = day.strftime("%Y-%m-%d")
-        buckets[key] = {
-            "date": day.strftime("%m-%d"), "key": key, "wd": _WD[day.isoweekday() % 7],
-            "today": i == 0, "tasks": 0, "score": 0, "dungeon": 0,
-            "modes": [], "notes": [], "stamina": None, "stamina_total": None,
-        }
+        buckets[day.strftime("%Y-%m-%d")] = _empty_day_bucket(day, i == 0)
 
     # 事件按 seq 倒序返回；反过来遍历，让「当天最新一条」覆盖旧值（开拓力等快照类字段）
     rows = eventdb.list_events("outcome", 20000, frm=frm, to=now)
@@ -196,30 +234,6 @@ def outcome_daily(inst: dict, days: int = 7, now: int | None = None) -> dict:
         oc = e.get("outcome") or {}
         if not isinstance(oc, dict):
             continue
-        b["tasks"] += 1
-        b["score"] += int(oc.get("score") or 0)
-        b["dungeon"] += int(oc.get("dungeon") or 0)
-        if oc.get("stamina") is not None:
-            b["stamina"] = int(oc.get("stamina"))
-            b["stamina_total"] = int(oc.get("stamina_total") or 0)
-        for m in (oc.get("modes") or []):
-            if m not in b["modes"]:
-                b["modes"].append(m)
-        for n in (oc.get("notes") or []):
-            if n not in b["notes"]:
-                b["notes"].append(n)
+        _accumulate_into_bucket(b, oc)
 
-    day_list = list(buckets.values())
-    today = day_list[-1] if day_list else None
-    return {
-        "range_days": days,
-        "today": today,
-        "list": day_list,
-        "total_tasks": sum(d["tasks"] for d in day_list),
-        "has_data": bool(today and today["tasks"] > 0),
-        "week": {
-            "tasks": sum(d["tasks"] for d in day_list),
-            "score": sum(d["score"] for d in day_list),
-            "dungeon": sum(d["dungeon"] for d in day_list),
-        },
-    }
+    return _summarize_days(list(buckets.values()), days)

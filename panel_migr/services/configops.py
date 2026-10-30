@@ -9,12 +9,14 @@ import html
 import json
 import os
 import re
+import logging
 import secrets
 import time
 from pathlib import Path
 
-import config as cfg
-from services.instances import instance_config, instance_dir
+from services.instances import instance_config
+
+log = logging.getLogger("m7a.configops")
 
 _TABLES = json.loads((Path(__file__).with_name("php_tables.json")).read_text("utf-8"))
 CONFIG_GROUPS: dict = _TABLES["config_groups"]
@@ -322,7 +324,8 @@ def _yaml_dq(val) -> str:
     )
     # 其它控制字符：YAML 双引号里必须转义，否则整份文件非法
     if any(ord(c) < 0x20 and c not in "\n\r\t" for c in s):
-        s = "".join("\\x%02x" % ord(c) if (ord(c) < 0x20 or ord(c) == 0x7F) else c for c in s)
+        s = "".join(
+            f"\\x{ord(c):02x}" if (ord(c) < 0x20 or ord(c) == 0x7F) else c for c in s)
     return '"' + s + '"'
 
 
@@ -420,7 +423,7 @@ def _escape_controls(text: str) -> str:
         elif c == "\t":
             out.append("\\t")
         elif ord(c) < 0x20 or ord(c) == 0x7F:
-            out.append("\\x%02x" % ord(c))
+            out.append(f"\\x{ord(c):02x}")
         else:
             out.append(c)
     return "".join(out)
@@ -439,9 +442,7 @@ def _needs_quote(val: str) -> bool:
         return True
     if ": " in val or val.endswith(":"):
         return True   # `k: a: b` 裸写会变成映射/非法 YAML
-    if val.lower() in ("true", "false", "yes", "no", "on", "off", "null", "~"):
-        return True
-    return False
+    return val.lower() in ("true", "false", "yes", "no", "on", "off", "null", "~")
 
 
 def _dq_wrap(val: str) -> str:
@@ -556,10 +557,12 @@ def config_backup(inst: dict):
                 f.write(src.read_bytes())
             return str(dst)
         except OSError:
+            # 清理类：备份拷贝失败后删掉半截 .bak（返回 None 由调用方决定是否阻断），
+            # 删不掉只是留下垃圾文件，不影响正确性。
             try:
                 os.unlink(str(dst))
             except OSError:
-                pass
+                log.debug("configops: 清理失败的备份文件 %s 未果", dst, exc_info=True)
             return None
     return None
 

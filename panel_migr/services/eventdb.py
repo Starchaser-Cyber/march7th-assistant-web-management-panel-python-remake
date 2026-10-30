@@ -10,12 +10,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 import time
 
-import config
 from services.logs import elapsed_ok    # v1.24.4：时钟回拨安全的节流判定
+
+log = logging.getLogger("m7a.eventdb")
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS events (
@@ -71,7 +73,8 @@ def _conn() -> sqlite3.Connection:
         try:
             cur.close()
         except sqlite3.Error:
-            pass
+            # 清理类：旧连接本来就要丢（epoch 已轮换），close 失败不影响新连接。
+            log.debug("eventdb: 关闭过期连接失败", exc_info=True)
     p = db_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     c = sqlite3.connect(p, timeout=10)
@@ -94,7 +97,9 @@ def reset() -> None:
             try:
                 c.close()
             except sqlite3.Error:
-                pass
+                # 清理类：reset 的语义就是「全部丢弃」，单个连接关不掉也要继续清空，
+                # 否则 _conns 残留会让下次 reset 反复报错。
+                log.debug("eventdb: reset 关闭连接失败", exc_info=True)
         _conns.clear()
     _last_sample_ts.clear()
 
@@ -308,14 +313,18 @@ def trim(now: int | None = None) -> bool:
             try:
                 c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             except sqlite3.Error:
-                pass
+                # 业务可降级：checkpoint 失败只意味着 -wal 不缩小（磁盘占用略高），
+                # 数据一致性不受影响，下个 trim 周期再试。用 debug 避免刷日志。
+                log.debug("eventdb: wal_checkpoint 失败（下周期重试）", exc_info=True)
             _trim_count += 1
             if _trim_count % VACUUM_EVERY_N_TRIMS == 0:
                 # 上一行已 commit，此刻不在事务里 → VACUUM 合法
                 try:
                     c.execute("VACUUM")
                 except sqlite3.Error:
-                    pass                # 被其他连接占用等 → 下个周期再试
+                    # 被其他连接占用等 → 下个周期再试。属可降级维护动作，
+                    # 失败不丢数据、不影响查询，debug 即可。
+                    log.debug("eventdb: VACUUM 失败（下周期重试）", exc_info=True)
         return True
     except (sqlite3.Error, OSError, ValueError):
         return False

@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="M7A WebUI">
-<link rel="stylesheet" href="/static/panel.css">
+<link rel="stylesheet" href="/static/panel.css?v={{ PANEL_VERSION }}">
 </head>
 <body>
 
@@ -838,7 +838,7 @@
 </div>
 {% endif %}
 
-<script>window.TASK_LIST = {{ json_encode(TASKS) | safe }};window.PANEL_UPDATE_MODE = {{ json_encode(panel_update_mode()) | safe }};</script>
-<script src="/static/panel.js"></script>
+<script>window.TASK_LIST = {{ json_encode(TASKS) | safe }};window.PANEL_UPDATE_MODE = {{ json_encode(panel_update_mode()) | safe }};window.PANEL_VERSION = {{ json_encode(PANEL_VERSION) | safe }};</script>
+<script src="/static/panel.js?v={{ PANEL_VERSION }}"></script>
 </body>
 </html>

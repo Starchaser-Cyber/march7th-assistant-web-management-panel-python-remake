@@ -114,7 +114,7 @@ function switchTab(name) {
   try { localStorage.setItem('m7a_tab', name); } catch(e) {}
   if (name === 'log') refreshLog();
   if (name === 'tasks') { loadHistory(); loadTaskStats(); }
-  if (name === 'overview') { refreshStatus(); loadOutcome(true); }
+  if (name === 'overview') { refreshStatus(); loadOutcome(true); if (typeof ensureMonitorChart === 'function') ensureMonitorChart(); }
   closeSidebar();
 }
 // Restore tab
@@ -535,29 +535,87 @@ function exportData(what) {
 var _monChart = null;
 var _monTimer = null;
 var _monRange = '1h';
+/* v1.24.7 首屏性能：echarts 约 1.0 MB（gzip 后约 324 KB），是首屏最大的一笔开销，
+   而它只在「概览」页的资源监控卡片里画曲线。改为首次需要画图时才按需加载：
+   - _ecState: '' 未加载 / 'loading' 正在加载 / 'ready' 已就绪 / 'failed' 加载失败
+   - _ecWaiters: 加载中排队的回调，加载成功后统一执行 */
+var _ecState = '';
+var _ecWaiters = [];
+var _lastMonData = null;
+function _ecVer() {
+  /* 静态资产带一年强缓存（main.py 的 _CachedStaticFiles），必须靠 ?v= 版本串破缓存 */
+  return (window.PANEL_VERSION ? '?v=' + encodeURIComponent(window.PANEL_VERSION) : '');
+}
 function loadECharts(cb) {
   if (window.echarts) { if (cb) cb(); return; }
+  if (_ecState === 'failed') return;
+  if (cb) _ecWaiters.push(cb);
+  if (_ecState === 'loading') return;
+  _ecState = 'loading';
   /* v1.24.3 安全加固（M7A-07）：echarts 随包本地分发（/static/vendor/echarts.min.js），
      不再依赖公共 CDN —— 公共 CDN 若被投毒即可注入脚本窃取管理员会话；
      首选本地（离线可用），仅本地缺失时才退到 CDN 兜底。 */
   var urls = [
-    '/static/vendor/echarts.min.js',
+    '/static/vendor/echarts.min.js' + _ecVer(),
     'https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js'
   ];
   var i = 0;
+  function flush() {
+    var ws = _ecWaiters;
+    _ecWaiters = [];
+    for (var k = 0; k < ws.length; k++) { try { ws[k](); } catch (e) {} }
+  }
   function tryNext() {
     if (i >= urls.length) {
+      _ecState = 'failed';
+      _ecWaiters = [];
       var box = document.getElementById('monChart');
       if (box) box.innerHTML = '<div style="text-align:center;color:var(--muted);padding-top:110px;font-size:13px;">⚠️ 图表库加载失败，上方数字指标仍可用</div>';
       return;
     }
     var s = document.createElement('script');
     s.src = urls[i++];
-    s.onload = function(){ if (cb) cb(); };
+    s.onload = function() {
+      if (!window.echarts) { tryNext(); return; }
+      _ecState = 'ready';
+      flush();
+    };
     s.onerror = tryNext;
     document.head.appendChild(s);
   }
   tryNext();
+}
+/* v1.24.7：确保监控卡片可见时才加载 echarts 并画图。
+   已就绪就直接画；未加载则先加载，成功回调里再画一次（此时数字指标已渲染）。 */
+function _monCardVisible() {
+  var box = document.getElementById('monChart');
+  if (!box) return false;
+  /* 图表容器在「概览」页；切到别的 tab 时 .page 无 active，不必为它下 1 MB 脚本 */
+  var page = box.closest ? box.closest('.page') : null;
+  return !page || page.classList.contains('active');
+}
+function ensureMonitorChart() {
+  if (window.echarts) return true;
+  /* 已排队加载中：不再重复入队（renderMonitor 每秒都会走到这里） */
+  if (_ecState === 'loading' || _ecState === 'failed') return false;
+  if (!_monCardVisible()) return false;
+  loadECharts(function() { if (_lastMonData) renderMonitor(_lastMonData); });
+  return false;
+}
+/* v1.24.7：监控卡片在「概览」页，但位置在首屏之外（容器状态 + 游戏预览之后）。
+   用 IntersectionObserver 在它即将滚入视口时才加载 echarts，首屏一个字节都不下。
+   浏览器不支持 IO 时退回「卡片可见即加载」（仍比无条件加载省）。 */
+function _watchMonitorCard() {
+  var box = document.getElementById('monChart');
+  if (!box) return;
+  if (window.echarts || _ecState) return;
+  if (typeof IntersectionObserver !== 'function') { ensureMonitorChart(); return; }
+  var io = new IntersectionObserver(function(entries) {
+    for (var i = 0; i < entries.length; i++) {
+      if (entries[i].isIntersecting) { io.disconnect(); ensureMonitorChart(); return; }
+    }
+  }, { rootMargin: '200px' });
+  io.observe(box);
 }
 function fmtBytes(b) {
   if (b >= 1024*1024*1024) return (b/1024/1024/1024).toFixed(1) + 'G';
@@ -606,6 +664,8 @@ function setMonStat(id, val, pct, cls) {
   var bar = el.querySelector('.m-bar > i'); if (bar) bar.style.width = (pct || 0) + '%';
 }
 function renderMonitor(d) {
+  /* v1.24.7：缓存最近一次数据，供 echarts 懒加载完成后补画一次图 */
+  _lastMonData = d;
   var pts = d.points || [];
   var last = pts.length ? pts[pts.length-1] : null;
   if (last) {
@@ -632,7 +692,10 @@ function renderMonitor(d) {
       '<span class="mon-host-row">内存 <b>' + fmtBytes(h.memTotal||0) + '</b></span>' +
       '<span class="mon-host-row">磁盘 <b>' + fmtBytes(h.diskUsed||0) + ' / ' + fmtBytes(h.diskTotal||0) + '</b></span>';
   }
-  if (window.echarts && _monRange !== 'custom' && _monRange !== '7d' && _monRange !== '30d') {
+  /* v1.24.7：图表库按需加载 —— 只有监控卡片可见时才去拉 echarts（约 1 MB）。
+     未就绪时数字指标照常渲染，加载完成后由 ensureMonitorChart 回调补画。 */
+  if (_monRange !== 'custom' && _monRange !== '7d' && _monRange !== '30d') {
+    if (!window.echarts) { ensureMonitorChart(); return; }
     if (!_monChart) {
       var box = document.getElementById('monChart');
       if (box) { box.innerHTML = ''; _monChart = echarts.init(box); }
@@ -1823,8 +1886,11 @@ refreshStatus();
 refreshLog();
 startAutoRefresh();
 initLogExport();
-loadECharts(function(){ loadMonitor(); });
+/* v1.24.7 首屏性能：不再无条件 loadECharts —— echarts 约 1 MB，只在监控卡片
+   真正滚入视口时由 _watchMonitorCard → ensureMonitorChart 按需加载。
+   startMonitor 只拉数字指标（ajax=monitor），不依赖图表库。 */
 startMonitor();
+_watchMonitorCard();
 /* v1.23 M1：收益日报 + 成功率统计（首屏在概览页，任务页切过去时再拉） */
 loadOutcome(true);
 setTimeout(loadTaskStats, 600);

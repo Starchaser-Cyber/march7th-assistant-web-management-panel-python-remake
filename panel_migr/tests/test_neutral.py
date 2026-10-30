@@ -57,6 +57,8 @@ def test_flash_fallback_neutral():
 
 
 def test_updateops_err_copy_neutral():
-    src = (ROOT / "services" / "updateops.py").read_text(encoding="utf-8")
+    # v1.24.7（方向C）：services/updateops.py 拆成 services/updateops/ 包，源码要扫整包。
+    pkg = ROOT / "services" / "updateops"
+    src = "".join(p.read_text(encoding="utf-8") for p in sorted(pkg.glob("*.py")))
     assert "写入 index.php 失败" not in src
     assert "写入面板主文件失败" in src

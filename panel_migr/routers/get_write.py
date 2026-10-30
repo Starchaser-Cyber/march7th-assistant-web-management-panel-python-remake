@@ -16,19 +16,17 @@ from pathlib import Path
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
 
 import config as cfg
-from phpsess import is_auth
 from services import updateops
 from services.alerts import alert_tick, heartbeat_touch
 from services.configops import config_read_raw
 from services.doctor import panel_doctor
-from services.instances import instance_current, panel_config_save
+from services.instances import panel_config_save
 from services.logs import filter_log, log_files
 from services.schedule import schedule_run_due
-from services.shell import run_cmd
 
-
-def _inst(request):
-    return instance_current(request.state.session)
+# v1.24.7（方向E）：`_inst` / `_to_int` 原本在本文件与 routers/readonly.py 各有一份
+# 逐字节相同的实现。统一由 readonly 提供（它依赖最少，get_write 单向依赖不成环）。
+from routers.readonly import _inst, _to_int  # noqa: E402
 
 
 # ===== 7 个写型 GET（ajax）=====
@@ -108,13 +106,7 @@ def h_export_log(request) -> Response:
     if path is None:
         return Response(content="", media_type="text/plain")
     # v1.24.4（P2）：hours 曾直接 int() 无保护 —— ?export_log=1&hours=abc 会抛
-    # ValueError 变成 500。全仓其余同类参数都有兜底，此处补齐（非法值回落 0=不限）。
-    def _to_int(v, default=0):
-        try:
-            return int(v)
-        except (TypeError, ValueError):
-            return default
-
+    # ValueError 变成 500。兜底实现已上提到 routers/readonly._to_int（v1.24.7 合并）。
     opts = {
         "keyword": str(request.query_params.get("keyword") or ""),
         "level": str(request.query_params.get("level") or ""),

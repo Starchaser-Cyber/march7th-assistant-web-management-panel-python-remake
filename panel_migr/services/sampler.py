@@ -60,15 +60,21 @@ async def runner() -> None:
     next_log = 0.0
     next_alert = 0.0
     next_trim = 0.0
+    next_inst = 0.0
     while True:
         try:
             await asyncio.sleep(1)
-            if inst is None:
+            now = time.monotonic()
+            # 审计 C-P2-8：原先只在 inst is None 时才重读实例，一旦拿到就永久缓存
+            # → 用户切换默认实例后，后台采样/告警/日志流仍打旧实例，直到进程重启。
+            # 改为每 10 秒重读一次（读的是本地 JSON，代价可忽略）。
+            if inst is None or now >= next_inst:
+                next_inst = now + 10.0
                 try:
                     inst = instance_current({})
                 except Exception:
-                    continue
-            now = time.monotonic()
+                    if inst is None:
+                        continue
             try:
                 await anyio.to_thread.run_sync(sample_once, inst)
             except Exception:

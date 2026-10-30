@@ -104,7 +104,7 @@ def schedule_validate(inp: dict) -> tuple[str, dict | None]:
     if not re.match(r"^([01]?\d|2[0-3]):[0-5]\d$", t):
         return "时间格式不正确，请用 24 小时制（如 04:00）", None
     hh, mm = t.split(":")
-    t = "%02d:%02d" % (int(hh), int(mm))
+    t = f"{int(hh):02d}:{int(mm):02d}"
 
     raw_days = inp.get("days") if isinstance(inp.get("days"), list) else [inp.get("days")]
     days: list[int] = []
@@ -162,6 +162,33 @@ def schedule_due(task: dict, now: int | None = None) -> tuple[bool, str]:
     return True, slot
 
 
+def _tasks_busy(inst: dict) -> bool:
+    """是否有任务正在跑（读历史的最新状态）。"""
+    return any(it.get("status") == "running" for it in history_sync(inst)["items"])
+
+
+def _try_clear_busy(inst: dict) -> tuple[bool, str]:
+    """冲突策略为 stop 时，尝试重启容器腾出执行位。
+
+    返回 (busy, err)。err 非空表示「停掉当前任务失败」，调用方应记为失败并跳过。
+    """
+    rr = compose(inst, "restart")
+    if rr["code"] != 0:
+        return True, "失败：停掉当前任务失败（" + rr["out"].strip() + "）"
+    return False, ""
+
+
+def _fire_task(inst: dict, t: dict) -> tuple[bool, str]:
+    """起一条计划任务，返回 (ok, 结果文案)。"""
+    args = str(t["args"])
+    label = cfg.TASKS.get(args, args)
+    sr = task_start(inst, args)
+    if sr["code"] == 0:
+        history_add(inst, args, label)
+        return True, "已触发"
+    return False, "失败：" + sr["out"].strip()
+
+
 def schedule_run_due(inst: dict, now: int | None = None) -> dict:
     """执行一轮检查：命中即起任务。返回 {'ok','time','ran','skipped'}。"""
     d = schedule_load(inst)
@@ -185,31 +212,22 @@ def schedule_run_due(inst: dict, now: int | None = None) -> dict:
             continue
 
         if busy is None:
-            busy = any(
-                it.get("status") == "running" for it in history_sync(inst)["items"]
-            )
+            busy = _tasks_busy(inst)
         if busy:
-            if d["conflict"] == "stop":
-                rr = compose(inst, "restart")
-                if rr["code"] != 0:
-                    d["tasks"][i]["last_result"] = "失败：停掉当前任务失败（" + rr["out"].strip() + "）"
-                    continue
-                busy = False
-            else:
+            if d["conflict"] != "stop":
                 d["tasks"][i]["last_result"] = "跳过（有任务在跑）"
                 skipped.append(name)
                 continue
+            busy, err = _try_clear_busy(inst)
+            if err:
+                d["tasks"][i]["last_result"] = err
+                continue
 
-        args = str(t["args"])
-        label = cfg.TASKS.get(args, args)
-        sr = task_start(inst, args)
-        if sr["code"] == 0:
-            history_add(inst, args, label)
-            d["tasks"][i]["last_result"] = "已触发"
+        ok, result = _fire_task(inst, t)
+        d["tasks"][i]["last_result"] = result
+        if ok:
             ran.append(name)
             busy = True
-        else:
-            d["tasks"][i]["last_result"] = "失败：" + sr["out"].strip()
 
     if changed:
         schedule_save(inst, d)

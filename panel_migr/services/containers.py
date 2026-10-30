@@ -9,7 +9,7 @@ from shlex import quote
 
 import config as cfg
 from services.history import history_add, history_write, history_read
-from services.instances import instance_config, instance_container, instance_dir
+from services.instances import instance_container, instance_dir
 from services.shell import run_cmd
 
 

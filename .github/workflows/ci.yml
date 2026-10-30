@@ -1,0 +1,82 @@
+# m7a_panel CI（v1.24.7 工程配置）
+#
+# 目标：任何一次改动都能在 3 分钟内回答两个问题——
+#   1) 代码能不能 import / 有没有未定义名、未使用变量这类低级错误（ruff）
+#   2) 现有 700+ 个测试是否仍然全绿（pytest）
+# 这里不跑 docker、不联网：测试本身用 monkeypatch 打桩（见 tests/conftest.py）。
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支的新推送取消上一次仍在跑的 CI，省机器也省排队
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: ruff (静态检查)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装 ruff
+        run: pip install "ruff>=0.6"
+
+      - name: ruff check
+        # 规则集与忽略项全部在仓库根的 ruff.toml 里，CI 与本地完全一致
+        run: ruff check .
+
+  test:
+    name: pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          # 用 lock 文件：审计要求「实测通过的确切版本」，避免上游小版本漂移把 CI 弄红
+          pip install -r panel_migr/requirements.lock
+          # pyyaml 只在测试里用（P0-1 回归要用 yaml.safe_load 校验 config.yaml 合法性）
+          pip install "pytest>=8" "pyyaml>=6"
+
+      - name: 运行测试
+        # M7A_EVENTS_BG=0：关掉事件采样后台线程（测试里不需要，还会拖慢并引入抖动）
+        # 工作目录必须切到 panel_migr/：config.py 用相对路径定位 data/、templates/、static/
+        working-directory: panel_migr
+        env:
+          M7A_EVENTS_BG: "0"
+        run: python -m pytest tests -q
+
+      - name: 上传失败详情
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-failures-py${{ matrix.python-version }}
+          path: |
+            panel_migr/.pytest_cache/v/cache/lastfailed
+            panel_migr/tests/_tmp/**
+          if-no-files-found: ignore
+          retention-days: 7

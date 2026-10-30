@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import random
@@ -31,7 +32,6 @@ from services.configops import (
     notify_health_check,
     yaml_format_val,
     yaml_read_simple,
-    h,
 )
 from services.containers import compose, container_is_running, ensure_running, task_start
 from services.flash import flash
@@ -40,7 +40,6 @@ from services.instances import (
     instance_config,
     instance_container,
     instance_current,
-    instance_dir,
     instance_name,
     instance_switch_to,
     instances_load,
@@ -160,10 +159,8 @@ def _issue_csrf(session: dict, sid: str) -> str:
     if not tok:
         tok = secrets.token_hex(16)
         session[cfg.CSRF_KEY] = tok
-        try:
+        with contextlib.suppress(OSError):
             session_set(sid, cfg.CSRF_KEY, tok)
-        except OSError:
-            pass
     return tok
 
 
@@ -207,6 +204,38 @@ def validate_inst_dir(raw: str) -> str:
     return ""
 
 
+_YAML_PAIRS = {")": "(", "]": "[", "}": "{"}
+_YAML_KEY_RE = re.compile(r"^[A-Za-z_][\w.-]*\s*:")
+_YAML_BLOCK_RE = re.compile(r"^(?:-\s+)?[^#]*:\s*[|>][+-]?\s*(?:#.*)?$")
+
+
+def _yaml_scan_line(stripped: str, stack: list[str]) -> str:
+    """扫描单行的括号配平与引号闭合，就地维护 stack。返回错误文案（空串=通过）。"""
+    i, quote = 0, None
+    while i < len(stripped):
+        ch = stripped[i]
+        if quote:
+            if quote == '"' and ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "#" and (i == 0 or stripped[i - 1] in " \t"):
+            break                        # 行内注释，其后不参与配平
+        elif ch in "([{":
+            stack.append(ch)
+        elif ch in ")]}":
+            if not stack or stack[-1] != _YAML_PAIRS[ch]:
+                return f"括号不匹配（多余的 {ch}）"
+            stack.pop()
+        i += 1
+    if quote:
+        return "引号未闭合"
+    return ""
+
+
 def validate_yaml_text(text: str) -> str:
     """轻量 YAML 结构校验，返回错误文案（空串=通过）。P1-23（审计 D-01）。
 
@@ -223,9 +252,7 @@ def validate_yaml_text(text: str) -> str:
     """
     if not text.strip():
         return "文件内容为空"
-    depth = 0
     stack: list[str] = []
-    pairs = {")": "(", "]": "[", "}": "{"}
     key_lines = 0
     in_block: str | None = None      # 处于 `|` / `>` 块标量内时不做括号/引号检查
     block_indent = 0
@@ -244,40 +271,15 @@ def validate_yaml_text(text: str) -> str:
         if stripped.startswith("\t"):
             return f"第 {lineno} 行：缩进不能使用 Tab，请改用空格"
         # 块标量起始（`key: |` / `key: >` / `- |`）
-        m_block = re.match(r"^(?:-\s+)?[^#]*:\s*[|>][+-]?\s*(?:#.*)?$", stripped)
-        if m_block:
+        if _YAML_BLOCK_RE.match(stripped):
             in_block, block_indent = "|", indent
             continue
-        if re.match(r"^[A-Za-z_][\w.-]*\s*:", stripped) or re.match(r"^-\s", stripped):
-            if re.match(r"^[A-Za-z_][\w.-]*\s*:", stripped):
-                key_lines += 1
-        # 括号配平 + 引号闭合（跳过注释部分）
-        i, quote = 0, None
-        while i < len(stripped):
-            ch = stripped[i]
-            if quote:
-                if quote == '"' and ch == "\\":
-                    i += 2
-                    continue
-                if ch == quote:
-                    quote = None
-            elif ch in "\"'":
-                quote = ch
-            elif ch == "#" and (i == 0 or stripped[i - 1] in " \t"):
-                break                # 行内注释，其后不参与配平
-            elif ch in "([{":
-                stack.append(ch)
-                depth += 1
-            elif ch in ")]}":
-                if not stack or stack[-1] != pairs[ch]:
-                    return f"第 {lineno} 行：括号不匹配（多余的 {ch}）"
-                stack.pop()
-                depth -= 1
-            i += 1
-        if quote:
-            return f"第 {lineno} 行：引号未闭合"
-    if in_block is not None:
-        pass                          # 块标量到文件尾是合法的
+        if _YAML_KEY_RE.match(stripped):
+            key_lines += 1
+        err = _yaml_scan_line(stripped, stack)
+        if err:
+            return f"第 {lineno} 行：{err}"
+    # 块标量到文件尾是合法的，无需处理 in_block
     if stack:
         return "文件内容异常：括号/引号未闭合，疑似配置被截断"
     if key_lines == 0:
@@ -289,11 +291,20 @@ def validate_yaml_text(text: str) -> str:
 # ===== 认证 4（W1）=====
 
 
+# v1.24.7：bcrypt 5.0.0 的 hashpw 明确拒绝超过 72 字节的密码（抛 ValueError），
+# 而 h_setup_pass 没有 try → 用户设超长密码会拿到 500 而不是提示。这里前置拦截；
+# passwd.set_pass 内部另有兜底（防止其它调用点漏）。
+_PASS_MAX_BYTES = 72
+
+
 def h_setup_pass(request, form, session, sid):
     p1 = str(form.get("pass1") or "")
     p2 = str(form.get("pass2") or "")
     if len(p1) < 6:
         return F(err="密码至少 6 位")
+    if len(p1.encode("utf-8")) > _PASS_MAX_BYTES:
+        # 72 字节 ≈ 24 个汉字 / 72 个 ASCII 字符（bcrypt 的算法上限）
+        return F(err=f"密码过长（最多 {_PASS_MAX_BYTES} 字节，约 24 个汉字），请换短一些的密码")
     if p1 != p2:
         return F(err="两次输入的密码不一致")
     if passwd.set_pass(p1):
@@ -382,8 +393,12 @@ def h_restore_config(request, form, session, sid):
     if not bak:
         # 旧实现备份失败也照样覆盖（备份名 "无"）→ 写坏就没有回滚点。
         return F(err="原配置备份失败，已取消写入（避免无法回滚）")
+    # v1.24.7：原实现直接 write_text 整文件覆盖，写到一半断电/磁盘满会留下半截
+    # config.yaml（容器下次启动读不到配置）。改用与 config_save_* 相同的原子写。
+    from services.configops import _atomic_write_text
+
     try:
-        Path(instance_config(inst)).write_text(text, "utf-8")
+        _atomic_write_text(instance_config(inst), text)
     except OSError:
         return F(err=f"写入失败，请检查文件权限：chmod 666 {instance_config(inst)}")
     bakname = Path(bak).name
@@ -399,6 +414,50 @@ def h_instance_switch(request, form, session, sid):
         inst = instance_current(session)
         return F(msg=f"已切换到实例：{instance_name(inst)}（{instance_container(inst)}）")
     return F(err="切换失败：实例不存在")
+
+
+def _instance_upsert(lst: list[dict], _id: str, name: str, container: str,
+                     _dir: str, is_default: bool) -> tuple[bool, str]:
+    """在实例列表上执行新增/编辑，返回 (is_new, err)。err 非空时不写盘。
+
+    v1.24.5 修复（Q-02）：新增实例时 inst_id 为空，旧判据
+    `(_id == "" and item["container"] == container)` 退化成「容器名相同即视为
+    同一条」，于是把已有实例整条改写（id 保留、name/dir 被新值覆盖），文案还写
+    「已更新」，用户以为新建了一个、实际原实例配置被静默吞掉（总数仍为 1）。
+    现在只有**编辑**（带 inst_id）才按 id 命中更新；新增撞名一律报错且不写盘。
+    """
+    is_new = True
+    used: list[str] = []
+    for i, item in enumerate(lst):
+        if _id != "" and item["id"] == _id:
+            lst[i] = dict(item, name=name, container=container, dir=_dir, default=is_default)
+            is_new = False
+        elif item["container"] == container:
+            used.append(item["name"])
+    if used:
+        err = "容器名已被实例「" + "、".join(used) + "」使用"
+        if _id == "":
+            err += "，请换一个容器名，或编辑该实例"
+        return is_new, err
+    if is_new:
+        lst.append({"id": container, "name": name, "container": container,
+                    "dir": _dir, "default": is_default})
+    return is_new, ""
+
+
+def _instance_apply_default(lst: list[dict], self_id: str, is_default: bool) -> None:
+    """保证列表里恰好只有一个默认实例（就地修改）。"""
+    any_default = False
+    for i, item in enumerate(lst):
+        if is_default and item["id"] == self_id:
+            lst[i]["default"] = True
+            any_default = True
+        elif is_default and item.get("default"):
+            lst[i]["default"] = False
+        elif not is_default and item.get("default"):
+            any_default = True
+    if not any_default and lst:
+        lst[0]["default"] = True
 
 
 def h_instance_save(request, form, session, sid):
@@ -418,43 +477,11 @@ def h_instance_save(request, form, session, sid):
         return F(err=derr)
 
     lst = instances_load()
-    is_new = True
-    used: list[str] = []
-    for i, item in enumerate(lst):
-        # v1.24.5 修复（Q-02）：新增实例时 inst_id 为空，旧判据 `(_id == "" and
-        # item["container"] == container)` 退化成「容器名相同即视为同一条」，于是把
-        # 已有实例整条改写（id 保留、name/dir 被新值覆盖），文案还写「已更新」，
-        # 用户以为新建了一个、实际原实例配置被静默吞掉（总数仍为 1）。
-        # 现在只有**编辑**（带 inst_id）才按 id 命中更新；新增撞名一律报错且不写盘。
-        if _id != "" and item["id"] == _id:
-            lst[i] = dict(item, name=name, container=container, dir=_dir, default=is_default)
-            is_new = False
-        elif item["container"] == container:
-            used.append(item["name"])
-    err = ""
-    if used:
-        err = "容器名已被实例「" + "、".join(used) + "」使用"
-        if _id == "":
-            err += "，请换一个容器名，或编辑该实例"
-    elif is_new:
-        lst.append({"id": container, "name": name, "container": container,
-                    "dir": _dir, "default": is_default})
+    is_new, err = _instance_upsert(lst, _id, name, container, _dir, is_default)
     if err:
         return F(err=err)
 
-    # 保证只有一个默认实例
-    any_default = False
-    self_id = container if is_new else _id
-    for i, item in enumerate(lst):
-        if is_default and item["id"] == self_id:
-            lst[i]["default"] = True
-            any_default = True
-        elif is_default and item.get("default"):
-            lst[i]["default"] = False
-        elif not is_default and item.get("default"):
-            any_default = True
-    if not any_default and lst:
-        lst[0]["default"] = True
+    _instance_apply_default(lst, container if is_new else _id, is_default)
 
     if instances_write(lst):
         if is_new:

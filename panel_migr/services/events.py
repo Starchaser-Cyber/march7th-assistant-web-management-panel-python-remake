@@ -8,7 +8,6 @@ WS 侧回 resync（客户端转 REST 拉全量快照），不尝试跨重启补�
 """
 from __future__ import annotations
 
-import json
 import threading
 import time
 from collections import deque

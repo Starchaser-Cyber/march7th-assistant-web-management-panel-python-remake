@@ -22,7 +22,25 @@ from services.shell import run_cmd
 
 
 def _inst(request):
+    """当前请求绑定的实例（唯一实现）。
+
+    v1.24.7（方向E）：`routers/get_write.py` 曾有逐字节相同的副本，现统一从这里
+    import —— readonly 依赖最少（只碰 services 的只读模块），由 get_write 单向
+    依赖它不会成环（routers/__init__ 也是先 import readonly）。
+    """
     return instance_current(request.state.session)
+
+
+def _to_int(v, default=0):
+    """query 参数转 int，非法值回落 default（不抛 500）。
+
+    v1.24.7（方向E）：`h_log` 与 `get_write.h_export_log` 曾各有一份相同的嵌套
+    `to_int`，合并到这里；`?hours=abc` 之类的脏参数统一回落而不炸 500（P2 修复）。
+    """
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
 
 
 def h_status(request):
@@ -39,23 +57,14 @@ def h_log(request):
     files = lg.log_files(inst)
     base_names = [os.path.basename(f) for f in files]
     file_q = (qp.get("file") or "").strip()
-    if file_q and file_q in base_names:
-        idx = base_names.index(file_q)
-    else:
-        idx = 0
+    idx = base_names.index(file_q) if file_q and file_q in base_names else 0
     path = files[idx] if idx < len(files) else None
-
-    def to_int(v, default=0):
-        try:
-            return int(v)
-        except (TypeError, ValueError):
-            return default
 
     opts = {
         "keyword": str(qp.get("keyword") or ""),
         "level": str(qp.get("level") or ""),
-        "hours": to_int(qp.get("hours"), 0),
-        "lines": max(100, min(5000, to_int(qp.get("lines"), 2000))),
+        "hours": _to_int(qp.get("hours"), 0),
+        "lines": max(100, min(5000, _to_int(qp.get("lines"), 2000))),
     }
     if path:
         r = lg.filter_log(path, opts)

@@ -1,0 +1,61 @@
+# m7a_panel 代码风格与静态检查（v1.24.7 工程配置）
+#
+# 为什么是 ruff：单二进制、无依赖、毫秒级，CI 里不需要额外装一堆插件，
+# 本地也能直接 `ruff check .`。
+#
+# 配置只放在本文件（不放 pyproject.toml 的 [tool.ruff]）：同一目录同时存在
+# 两份 ruff 配置时 ruff 只会取其一，双份配置必然漂移，是纯粹的维护陷阱。
+
+line-length = 100
+target-version = "py311"
+
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    ".ruff_cache",
+    "panel_migr/static",       # 第三方压缩 JS（echarts 等）
+    "panel_migr/tests/_tmp",   # 测试临时目录
+    "assets",
+    "backups",
+    "data",
+    "sessions",
+]
+
+[lint]
+select = [
+    "E",    # pycodestyle 错误
+    "F",    # Pyflakes：未定义名、未使用 import/变量、重复定义、f-string 缺占位符
+    "W",    # pycodestyle 警告
+    "B",    # flake8-bugbear：可变默认参数、循环变量未用、assert 误用等常见陷阱
+    "UP",   # pyupgrade：把过时写法升级到目标 Python 版本
+    "SIM",  # flake8-simplify：可简化的冗余写法
+]
+ignore = [
+    # ---- 与历史代码冲突、改动收益为零 ----
+    "E501",    # 行长：历史代码普遍超长（长 SQL、模板字符串），重排会制造巨大无意义 diff
+    "E741",    # 歧义变量名 l/I/O：测试里大量 `for l in lines`
+    "B007",    # 循环变量未用：`for i, _ in ...` 的历史写法
+    "E402",    # 见 per-file-ignores：main.py 与测试的 sys.path 惯用法无法避免
+    "UP009",   # UTF-8 编码声明：保留无害，删掉会制造 diff
+    "UP031",   # % 格式化 → f-string：14 处历史拼接，改写有引入 bug 风险、无功能收益
+    "UP032",   # 同上
+    "SIM105",  # contextlib.suppress 替代 try/except/pass：14 处，显式 try 更易读
+    "SIM117",  # 嵌套 with 合并：3 处，合并后行更长、可读性反而下降
+    "SIM201",  # not a == b → a != b：2 处，语义等价，不改
+    "SIM103",  # 直接返回条件：1 处，当前写法更直白
+]
+
+[lint.per-file-ignores]
+# main.py 是「先建 app 再挂中间件/mount」的顺序敏感文件，import 必须分散在文件中部
+"panel_migr/main.py" = ["E402"]
+# 测试文件统一 sys.path.insert 后再 import 项目模块，E402 无法避免；
+# 也常有「为文档效果保留的 import」与中间态变量
+"panel_migr/tests/*" = ["E402", "F401", "F841"]
+# updateops 包的兼容性再导出（__init__.py 是门面，re-export 大量名字）；
+# paneldefs.py 的历史分号与行尾空白
+"panel_migr/services/updateops/__init__.py" = ["F401"]
+"panel_migr/services/paneldefs.py" = ["E703", "W293"]
+
+[lint.isort]
+known-first-party = ["config", "gateway", "phpsess", "phpfile", "routers", "services"]

@@ -1,7 +1,9 @@
 """任务执行历史 —— 等价 PHP history_* 全套（共享同一 data/history_<container>.json）。"""
 from __future__ import annotations
 
+import contextlib
 import json
+import logging
 import os
 import random
 import re
@@ -13,6 +15,8 @@ from pathlib import Path
 from config import DATA_DIR, HISTORY_IDLE_SECONDS, HISTORY_KEEP
 from services.logs import latest_log_path
 from services.monitor import container_is_running
+
+log = logging.getLogger("m7a.history")
 
 # v1.24.4（P1-18）：history_<container>.json 的「读全量 → 改 → 整份覆盖写」
 # 必须互斥。history_sync（alert_tick / 页面）与 history_add（任务启动）并发时，
@@ -51,10 +55,11 @@ def history_write(inst: dict, d: dict) -> bool:
             tmp.write_text(json.dumps(d, ensure_ascii=False), "utf-8")
             os.replace(tmp, f)
         except OSError:
+            # 清理类：写盘已失败，删临时文件只是善后（原异常马上 re-raise）。
             try:
                 tmp.unlink()
             except OSError:
-                pass
+                log.debug("history: 清理临时文件失败 %s", tmp, exc_info=True)
             raise
         return True
     except OSError:
@@ -296,10 +301,10 @@ def _history_add_locked(inst: dict, task_key: str, task_label: str) -> bool:
     d = history_read(inst)
     max_id = 0
     for it in d["items"]:
-        try:
+        # 业务降级：历史文件里 id 可能是脏值（手改/旧版本写过字符串），
+        # 跳过该条即可，用 max_id 兜住「取最大 id +1」的语义。
+        with contextlib.suppress(TypeError, ValueError):
             max_id = max(max_id, int(it.get("id") or 0))
-        except (TypeError, ValueError):
-            pass
     d["items"].append({
         "id": max_id + 1,
         "task_key": str(task_key),
