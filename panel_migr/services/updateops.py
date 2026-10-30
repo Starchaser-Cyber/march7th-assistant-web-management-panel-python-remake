@@ -338,8 +338,21 @@ def _release_json() -> tuple[dict | None, str]:
     return j, ""
 
 
+# 发布包命名约定：`V{版本}.zip`（如 V1.24.6.zip）。Release 里还会挂审计包、
+# 交接包等附加资产，它们的名字**也**以版本号开头（V1.24.6-audit.zip），且带外层
+# 目录 → `_zip_struct_ok` 必然 False。旧判据 `^[Vv]\d` 对两者都成立，于是按 GitHub
+# API 的返回顺序误选审计包，在线更新 100% 失败（Q-10）。
+_VER_ZIP_RE = re.compile(r"^[Vv]\d+(?:\.\d+)*\.zip$")
+# 兜底：名字里带这些词的 zip 不是发布包
+_AUX_ZIP_RE = re.compile(r"audit|report|handoff|source|src", re.I)
+
+
 def _zip_asset(j: dict) -> tuple[str, str]:
-    """→ (zip 下载 URL, 资产名)。命名约定 V{版本}.zip，其次任意 *.zip。"""
+    """→ (zip 下载 URL, 资产名)。
+
+    优先级：① 严格形如 `V{版本}.zip` 的发布包 ② 名字不含 audit/report/handoff
+    等附加包标记的 zip（兼容旧命名）③ 以版本号开头的 zip ④ 第一个 zip（历史兜底）。
+    """
     if not isinstance(j, dict):
         return "", ""
     assets = j.get("assets") or []
@@ -347,9 +360,17 @@ def _zip_asset(j: dict) -> tuple[str, str]:
             if isinstance(a, dict) and str(a.get("name") or "").lower().endswith(".zip")]
     if not zips:
         return "", ""
-    prefer = [a for a in zips if re.match(r"^[Vv]\d", str(a.get("name") or ""))]
-    a = (prefer or zips)[0]
-    return str(a.get("browser_download_url") or ""), str(a.get("name") or "")
+
+    def _name(a: dict) -> str:
+        return str(a.get("name") or "")
+
+    exact = [a for a in zips if _VER_ZIP_RE.match(_name(a))]
+    if not exact:
+        exact = [a for a in zips if not _AUX_ZIP_RE.search(_name(a))]
+    if not exact:
+        exact = [a for a in zips if re.match(r"^[Vv]\d", _name(a))]
+    a = (exact or zips)[0]
+    return str(a.get("browser_download_url") or ""), _name(a)
 
 
 def _zip_urls(zip_url: str) -> list[tuple[str, str]]:

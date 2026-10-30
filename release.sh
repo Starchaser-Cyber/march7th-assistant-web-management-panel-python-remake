@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# m7a_panel V1.24.5 打包 + 发布脚本（分步执行，每步都可单独跑）
+# m7a_panel V1.24.6 打包 + 发布脚本（分步执行，每步都可单独跑）
 #
 # 用法：
 #   bash release.sh check          # 发版前检查（版本三处一致 / 语法 / 测试）
@@ -13,7 +13,7 @@ set -u
 ROOT=/home/huangsongping/dsh-workspace/m7a-fix
 DL=/home/huangsongping/dsh-workspace/m7a-dl
 AUD=/home/huangsongping/dsh-workspace/m7a-audit
-VER=1.24.5
+VER=1.24.6
 TAG=V${VER}
 REPO=Starchaser-Cyber/march7th-assistant-web-management-panel-python-remake
 PY=/tmp/auditvenv/bin/python
@@ -92,8 +92,8 @@ def info(name):
         sha=hashlib.sha256(p.read_bytes()).hexdigest(),
     )
 
-rel = info("V1.24.5.zip")
-aud = info("V1.24.5-audit.zip")
+rel = info("V1.24.6.zip")
+aud = info("V1.24.6-audit.zip")
 rpt = info("m7a-audit-report.zip")
 html = (tpl
     .replace("__REL_SIZE__", rel["size"]).replace("__REL_COUNT__", rel["count"]).replace("__REL_SHA__", rel["sha"])
