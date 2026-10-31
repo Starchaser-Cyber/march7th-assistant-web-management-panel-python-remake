@@ -21,6 +21,7 @@ from markupsafe import Markup
 import config as cfg
 from phpsess import is_auth, new_sid, session_id, session_remove, session_set, sid_valid
 from services.configops import config_read_raw, notify_check_html, yaml_read_simple
+from services.envoverride import env_override_html
 from services.containers import container_status
 from services.history import history_sync, history_today_stats, history_view
 from services.instances import (
@@ -109,6 +110,14 @@ def _task_groups(inst: dict) -> list:
         return tasklist.grouped(inst)
     except Exception:
         return []
+
+def _env_override_html(inst: dict) -> str:
+    """v1.26.2：容器环境变量盖住配置项的提示块（只读，失败静默返回空串）。"""
+    try:
+        return env_override_html(inst, CONFIG_GROUPS)
+    except Exception:
+        return ""
+
 
 def _panel_context(request, inst: dict, notify_check) -> dict:
     """PHP 页面段 12 个前置计算块 + 页面数据常量的等价供给。"""
@@ -206,6 +215,7 @@ def _panel_context(request, inst: dict, notify_check) -> dict:
         "schedEnabled": sched_enabled,
         "raw_cfg": raw_cfg,
         "notifyCheck": notify_check,
+        "envOverrideHtml": _env_override_html(inst),
         "TASKS": TASKS,
         "OPS": OPS,
         "CONFIG_GROUPS": CONFIG_GROUPS,
@@ -322,6 +332,8 @@ def render_page(request, *, msg=None, err=None, notify_check=None) -> str:
         "CONFIG_GROUPS": CONFIG_GROUPS,
         "TASK_GROUPS": [],
         "TASK_DESC": {},
+        # v1.26.2：未登录时不探测容器，占位空串（模板里渲染为空）
+        "envOverrideHtml": "",
     }
     if authed:
         inst = instance_current(session)

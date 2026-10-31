@@ -676,6 +676,7 @@
             {{ csrf_field() }}
             <input type="hidden" name="action" value="save_config_form">
 
+            {{ envOverrideHtml | safe }}
             {% for gKey, g in CONFIG_GROUPS.items() %}{% set gCollapsed = g.get('collapsed', False) %}{% if gKey == 'notify' and notifyCheck is not none %}{{ notify_check_html(notifyCheck) }}{% endif %}
             <div class="cfg-group{{ (' collapsed' if gCollapsed else '') }}" id="cfgGroup-{{ gKey }}">
               {% if gCollapsed %}
