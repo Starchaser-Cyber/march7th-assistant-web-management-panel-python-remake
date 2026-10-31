@@ -33,7 +33,12 @@ def task_start(inst: dict, sub: str, label: str = "",
     """
     r = runs.start_run(inst, sub, label or sub, after_finish=after_finish, invoker=invoker)
     if r.get("err"):
-        return {"code": 1, "out": str(r["err"])}
+        out = {"code": 1, "out": str(r["err"])}
+        if r.get("busy"):
+            # 任务互斥：已有运行在跑。调用方据此给出「等它结束/先停止」的提示，
+            # 而不是笼统的「启动失败」。
+            out["busy"] = r["busy"]
+        return out
     return {"code": 0, "out": "", "run_id": r["run_id"], "start_ts": r["start_ts"]}
 
 

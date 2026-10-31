@@ -538,6 +538,10 @@ def _task_action(request, form, session, sid, key: str):
         if ck.get("started"):
             return F(msg=f"小助手已自动启动，任务「{label}」已后台开始")
         return F(msg=f"任务「{label}」已后台启动")
+    if r.get("busy"):
+        # v1.26.1：任务互斥。两个 python main.py 并发会互相关掉对方的浏览器
+        # （close_all_m7a_browser 按 cmdline 匹配同 tag 进程），这里直接拒绝。
+        return F(err=str(r["out"]))
     return F(msg="任务启动失败：" + r["out"])
 
 

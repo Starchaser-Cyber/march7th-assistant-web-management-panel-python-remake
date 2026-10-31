@@ -29,9 +29,19 @@ def h(s) -> str:
 
 
 def _atomic_write_text(path, text: str) -> None:
-    """config.yaml 原子写（临时文件 + os.replace），避免并发读者读到半截文件。
+    """写 config.yaml：**原地覆盖**，保留 inode。
 
-    mkstemp 建出的临时文件是 0600，直接 replace 会把 config.yaml 权限从 0644
+    config.yaml 是以**单文件 bind mount** 挂进容器的（compose 里
+    `./config.yaml:/m7a/config.yaml`）。`os.replace` 会换掉 inode，容器的
+    bind mount 仍钉在旧 inode 上（mountinfo 里表现为 `<src>//deleted`），
+    面板写进去的内容容器**永远读不到**，直到容器重启——v1.26.0 就是因此让
+    「改配置」静默失效的（10-31 12:53 之后三次修改全丢）。
+
+    所以这里必须 `inplace=True`：先写临时文件并 fsync，再原地覆盖 + truncate。
+    代价是覆盖瞬间有毫秒级半截窗口，调用方（config_save_* / restore_config）
+    都会先 `config_backup()` 备份，可回滚。
+
+    mkstemp 建出的临时文件是 0600，原地覆盖后会把 config.yaml 权限从 0644
     降成 0600（容器内非 root 进程可能读不到）→ 沿用原文件权限。
     """
     import os as _os
@@ -44,7 +54,7 @@ def _atomic_write_text(path, text: str) -> None:
         mode = _stat.S_IMODE(_os.stat(str(path)).st_mode)
     except OSError:
         mode = None
-    atomic_write_text(path, text, mode=mode)
+    atomic_write_text(path, text, mode=mode, inplace=True)
 
 
 # ===== 配置字段索引 =====

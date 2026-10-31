@@ -60,8 +60,21 @@ def load_php_file(path, default=None):
     return value
 
 
-def atomic_write_text(path, text: str, encoding: str = "utf-8", mode: int | None = None):
-    """临时文件 + os.replace 原子替换：并发读者永远看不到半截文件。"""
+def atomic_write_text(path, text: str, encoding: str = "utf-8", mode: int | None = None,
+                      inplace: bool = False):
+    """写文本文件。
+
+    默认「临时文件 + os.replace」原子替换：并发读者永远看不到半截文件。
+
+    `inplace=True` 用于目标是 docker **单文件 bind mount** 的场景（config.yaml）：
+    `os.replace` 会把 inode 换掉，容器里的 bind mount 仍钉在旧 inode 上，mountinfo
+    出现 `<src>//deleted`，面板写进去的配置容器永远读不到——直到容器重启才恢复。
+    v1.26.1 实测：面板 10-31 12:53 写入后，容器内 config.yaml 停在写入前的版本，
+    此后三次改配置全部静默失效。
+
+    改为「先写临时文件并 fsync，再原地覆盖 + truncate」：inode 不变，容器立刻可见。
+    代价是覆盖瞬间存在毫秒级半截窗口，因此调用方必须先备份。
+    """
     import os as _os
     import tempfile as _tempfile
 
@@ -71,9 +84,14 @@ def atomic_write_text(path, text: str, encoding: str = "utf-8", mode: int | None
     try:
         with _os.fdopen(fd, "w", encoding=encoding) as f:
             f.write(text)
-        _os.replace(tmp, path)
-        if mode is not None:
-            _os.chmod(path, mode)
+            f.flush()
+            _os.fsync(f.fileno())
+        if inplace and _os.path.exists(path):
+            _inplace_overwrite(path, tmp, mode)
+        else:
+            _os.replace(tmp, path)
+            if mode is not None:
+                _os.chmod(path, mode)
     except OSError:
         # 清理类：临时文件删不掉不影响主流程（原异常马上 re-raise），
         # 但留 debug 痕迹便于排查「.tmp_ 残留」问题。
@@ -82,6 +100,34 @@ def atomic_write_text(path, text: str, encoding: str = "utf-8", mode: int | None
         except OSError:
             log.debug("phpfile: 清理临时文件失败 %s", tmp, exc_info=True)
         raise
+
+
+def _inplace_overwrite(path: str, tmp: str, mode: int | None) -> None:
+    """把 tmp 的内容原地覆盖进 path：保留 inode，docker 单文件 bind mount 不断链。
+
+    先写后 truncate（而不是先 truncate 再写），把「读到空文件」的窗口压到最短。
+    """
+    import os as _os
+
+    with open(tmp, "rb") as src:
+        data = src.read()
+    fd = _os.open(path, _os.O_WRONLY)      # 不带 O_CREAT/O_TRUNC → 复用原 inode
+    try:
+        _os.lseek(fd, 0, _os.SEEK_SET)
+        view = memoryview(data)
+        while view:
+            n = _os.write(fd, view)
+            view = view[n:]
+        _os.ftruncate(fd, len(data))
+        _os.fsync(fd)
+    finally:
+        _os.close(fd)
+    try:
+        _os.unlink(tmp)
+    except OSError:
+        log.debug("phpfile: 清理临时文件失败 %s", tmp, exc_info=True)
+    if mode is not None:
+        _os.chmod(path, mode)
 
 
 # ===== 纯 Python 回退解析 / 序列化（var_export 格式）=====

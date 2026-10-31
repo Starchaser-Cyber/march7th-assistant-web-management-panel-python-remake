@@ -214,6 +214,24 @@ def _build_script(inst: dict, rid: str, task_key: str) -> str:
     return "\n".join(parts)
 
 
+def active_run(inst: dict, scan: int = 5) -> dict | None:
+    """返回当前仍在跑的那一次运行（没有则 None）——任务互斥锁的判定依据。
+
+    为什么必须互斥：小助手本体没有 `active.json` 锁，两个 `python main.py`
+    并发时 `module/game/cloud.py` 的 `close_all_m7a_browser()` 会按 cmdline
+    匹配到**对方**的浏览器并 terminate，两边轮流关对方的浏览器、抢同一个
+    CDP 端口（9222 → 冲突后回退 9224），最终 `tab crashed` 雪崩。10-31
+    15:47 与 15:53 各起一次 currencywarsloop 就是这样双双失败的。
+
+    只扫最近 `scan` 条账本：正在跑的一定是最新的几条，全量扫要逐条
+    `docker exec` 探测 pid，在 100 条账本时会让「点启动」卡好几秒。
+    """
+    for r in list_runs(inst, limit=max(1, int(scan))):
+        if str(r.get("status") or "") in ("running", "paused", "pausing", "queued"):
+            return r
+    return None
+
+
 def start_run(inst: dict, task_key: str, task_label: str = "",
               after_finish: str = "", invoker: str = "panel") -> dict:
     """启动一次任务并建账本。
@@ -223,6 +241,11 @@ def start_run(inst: dict, task_key: str, task_label: str = "",
     if not _TASK_RE.match(str(task_key or "")):
         return {"err": f"非法任务名：{task_key!r}"}
     _ensure_runs_dir(inst)
+    busy = active_run(inst)
+    if busy:
+        label = busy.get("task_label") or busy.get("task_key") or "任务"
+        return {"err": f"已有任务在运行（{label} · {busy.get('run_id')}），"
+                       f"请等它结束或先停止它", "busy": busy}
     rid = new_run_id()
     started = int(time.time())
     meta = {
