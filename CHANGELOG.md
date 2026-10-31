@@ -1,5 +1,33 @@
 # Changelog
 
+## V1.26.0（2026-10-31）
+
+**一句话总结**：给小助手补一套**运行账本**——面板不再「发一条命令就不管了」，每次任务都有运行 ID、进程号、真实退出码、完整输出和结束时间；任务表也从写死的 8 个改成从容器 `main.py --list` 现取，27 个任务全露出来；「停止任务」不再重启整个容器，改成按运行 ID 精确结束。
+
+✨ 新增
+
+- **运行账本（RunLedger）**：`services/runs.py`。启动任务时用一层 shell 包装（`docker exec -d sh -c '... python main.py <task> > <run>.log 2>&1 & echo $! > <run>.pid; wait; echo $? > <run>.exit'`）把每次运行落成 `logs/runs/<运行ID>.{json,log,pid,exit,control}` 五件套。**不需要升级小助手镜像**，当前线上 `v2026.10.16` 容器直接可用
+- **真实退出码**：`run_status()` 按 `.exit` → `.pid` 存活的优先级判定 success / failed / stopped / aborted，并把退出码翻译成人话（0 成功 / 2 参数错误 / 4 已有任务在跑 / 137 被终止 / 143 被终止…）
+- **动态任务表**：`services/tasklist.py`。`docker exec <容器> python main.py --list` 解析出容器真实支持的 27 个任务，按「常用 / 周常 / 循环与接管 / 原生界面 / 更新与维护 / 其他」6 组渲染；结果缓存 300 秒并落 `data/tasklist_<容器>.json`，容器抽风时回落到原来的 8 个任务，界面不会空
+- **精确停止**：`stop_run` 按运行 ID 先发 `pause` 再 `kill -15 <pid>`，只结束这一次运行，不重启容器、不影响其它任务；历史表每行「运行中」时出现「停止」按钮
+- **单次运行输出**：`?ajax=run_log&run_id=...` 读该次运行的完整日志（ANSI 已清洗），历史表「查看日志」现在打开的是**这一次**的输出，不再跳到全局日志页
+- **历史表新增两列**：退出码（按成功/失败/信号分色）、运行 ID（等宽字体）
+- **停止按钮确认文案**：明确写「只结束该次任务，容器不会重启，其它任务不受影响」
+
+🔧 变更
+
+- **任务启动走账本**：`containers.task_start()` 改为委托 `runs.start_run()`，返回里带 `run_id`；`history_add()` 增加 `run_id` 参数，历史记录与账本一一对应
+- **结束判定改用账本**：`history_sync()` 对有 `run_id` 的记录直接读账本结论（权威退出码 + 真实结束时间），只有老记录才回落「日志静默 90 秒」的启发式。修掉了 v1.24 起就存在的问题——线上历史里曾有 `notify` 记 6.5 小时、`currencywars` 记 6.5 小时且两条 `end_ts` 完全相同（被同一轮静默判定一起收尾），耗时数据不可信
+- **新增 3 个只读接口**：`?ajax=runs`（账本列表）、`?ajax=run_log`（单次输出）、`?ajax=tasks`（真实任务表）
+- **新增 1 个写接口**：`action=stop_run`（精确停止）
+- **主题色统一**：`_THEME_COLOR` 从 `#ec4899` 改为 `#f18cb9`，与 Fluent 外壳一致；`<meta name="theme-color">` 同步
+- **浏览器标签页图标**换成自定义头像：预生成 16/32/48/96/180/192/512 七档 PNG + `favicon.ico`，`?icon=1&size=N` 命中预生成文件时直接返回真图标，缺档才回落纯色 PNG（保持原有 size 钳制与缓存头行为不变）
+
+🧪 测试
+
+- 新增 `tests/test_v126_runs.py`、`tests/test_v126_tasklist.py`；`tests/test_v1247_cov_shell_containers.py` 的 `task_start` 断言改为「委托账本」；`tests/test_m2_post.py` 的 action 集合从 40 增到 41（新增 `stop_run`）
+- 全量 `1211 passed`（`tests/test_v1221.py::test_apply_zip_keeps_existing_venv` 仍是既有的环境性失败：本机非 root 下 `systemctl restart` 被拒）
+
 ## V1.25.1（2026-10-31）
 
 **一句话总结**：修一个交互瑕疵——切换页面后浏览器不会重置滚动位置，从很长的配置页切到概览页会直接落在半空中。

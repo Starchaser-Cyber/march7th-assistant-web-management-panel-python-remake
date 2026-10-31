@@ -102,10 +102,12 @@ def _history_sync_locked(inst: dict) -> dict:
     container_running = None
     finished: list[dict] = []
 
-    def _finish(i: int, end: int, status: str) -> None:
+    def _finish(i: int, end: int, status: str, exit_code=None) -> None:
         d["items"][i]["end_ts"] = end
         d["items"][i]["status"] = status
-        d["items"][i]["exit"] = 0 if status == "done" else -1
+        if exit_code is None:
+            exit_code = 0 if status == "done" else -1
+        d["items"][i]["exit"] = int(exit_code)
         try:
             # v1.23 M1-1：任务收尾时解析本次收益（只读日志，失败不影响历史记录）
             from services import outcome as _oc
@@ -117,8 +119,43 @@ def _history_sync_locked(inst: dict) -> dict:
             pass
         finished.append(d["items"][i])
 
+    def _sync_from_ledger(i: int, it: dict) -> bool:
+        """v1.26 RunLedger：有 run_id 的记录直接读账本结论（权威退出码）。
+
+        返回 True 表示「本轮已处理该条」（无论判完与否），调用方应跳过 mtime 启发式。
+        账本状态仍 running/paused 时返回 True 但不改记录——比静默启发式可靠。
+        """
+        rid = str(it.get("run_id") or "")
+        if not rid:
+            return False
+        try:
+            from services import runs as _runs
+            if not _runs.valid_run_id(rid):
+                return False
+            st = _runs.run_status(inst, rid)
+        except Exception:
+            return False
+        status = str(st.get("status") or "")
+        if status == "unknown":
+            return False                     # 账本缺失 → 回落 mtime 启发式
+        if status in ("running", "paused", "pausing", "queued"):
+            return True                      # 还在跑，交给下一轮
+        end = int(st.get("end_ts") or 0) or int(time.time())
+        code = st.get("exit_code")
+        if status == "success":
+            _finish(i, end, "done", 0)
+        else:
+            # stopped / aborted / failed 一律记为中断，退出码原样保留
+            _finish(i, end, "aborted", int(code) if code is not None else -1)
+        d["items"][i]["run_status"] = status
+        return True
+
     for i, it in enumerate(d["items"]):
         if not isinstance(it, dict) or it.get("status") != "running":
+            continue
+        if _sync_from_ledger(i, it):
+            if d["items"][i].get("status") != "running":
+                changed = True
             continue
         start = int(it.get("start_ts") or 0)
         if mtime == 0:
@@ -189,6 +226,9 @@ _STATUS_MAP = {
     "running": {"label": "运行中", "color": "var(--blue,#3b82f6)"},
     "done": {"label": "已完成", "color": "var(--green,#10b981)"},
     "aborted": {"label": "已中断", "color": "var(--red,#ef4444)"},
+    # v1.26：账本带来的更细状态（done/aborted 之外的失败细分）
+    "failed": {"label": "失败", "color": "var(--red,#ef4444)"},
+    "stopped": {"label": "已停止", "color": "var(--orange,#f59e0b)"},
 }
 
 
@@ -225,7 +265,7 @@ def history_view(items: list) -> list:
             dur = format_duration((end if end > 0 else start) - start)
         smap = _STATUS_MAP.get(st, {"label": st, "color": "var(--muted,#9ca3af)"})
         oc = it.get("outcome")
-        out.append({
+        rec = {
             "id": int(it.get("id") or 0),
             "task_label": str(it.get("task_label") or ""),
             "start_str": datetime.fromtimestamp(start).strftime("%m-%d %H:%M:%S") if start > 0 else "--",
@@ -235,7 +275,10 @@ def history_view(items: list) -> list:
             "status_color": smap["color"],
             "outcome_summary": outcome_summary(oc),
             **({"exit": it["exit"]} if "exit" in it else {}),
-        })
+        }
+        if it.get("run_id"):
+            rec["run_id"] = str(it["run_id"])
+        out.append(rec)
     return out
 
 
@@ -289,13 +332,17 @@ def history_week_stats(items: list) -> list:
     return list(buckets.values())
 
 
-def history_add(inst: dict, task_key: str, task_label: str) -> bool:
-    """等价 PHP history_add()：插一条 running 记录，超 HISTORY_KEEP 只留最近。"""
+def history_add(inst: dict, task_key: str, task_label: str, run_id: str = "") -> bool:
+    """等价 PHP history_add()：插一条 running 记录，超 HISTORY_KEEP 只留最近。
+
+    v1.26：带上 run_id 后，结束判定改读运行账本的权威退出码（不再靠日志静默猜）。
+    """
     with _HISTORY_LOCK:
-        return _history_add_locked(inst, task_key, task_label)
+        return _history_add_locked(inst, task_key, task_label, run_id)
 
 
-def _history_add_locked(inst: dict, task_key: str, task_label: str) -> bool:
+def _history_add_locked(inst: dict, task_key: str, task_label: str,
+                        run_id: str = "") -> bool:
     from services.instances import instance_container
 
     d = history_read(inst)
@@ -305,7 +352,7 @@ def _history_add_locked(inst: dict, task_key: str, task_label: str) -> bool:
         # 跳过该条即可，用 max_id 兜住「取最大 id +1」的语义。
         with contextlib.suppress(TypeError, ValueError):
             max_id = max(max_id, int(it.get("id") or 0))
-    d["items"].append({
+    rec = {
         "id": max_id + 1,
         "task_key": str(task_key),
         "task_label": str(task_label),
@@ -313,7 +360,10 @@ def _history_add_locked(inst: dict, task_key: str, task_label: str) -> bool:
         "start_ts": int(time.time()),
         "end_ts": 0,
         "status": "running",
-    })
+    }
+    if run_id:
+        rec["run_id"] = str(run_id)
+    d["items"].append(rec)
     if len(d["items"]) > HISTORY_KEEP:
         d["items"] = d["items"][-HISTORY_KEEP:]
     return history_write(inst, d)

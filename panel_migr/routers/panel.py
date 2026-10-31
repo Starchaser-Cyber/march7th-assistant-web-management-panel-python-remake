@@ -12,12 +12,22 @@ from __future__ import annotations
 import json
 import struct
 import zlib
+from pathlib import Path as _Path
 
 from fastapi.responses import Response
 
 # 面板品牌色（与模板 theme-color 一致）
-_THEME_COLOR = "#ec4899"
-_THEME_RGB = (236, 72, 153)
+# v1.26：跟随 Fluent 主题粉（原 #ec4899）
+_THEME_COLOR = "#f18cb9"
+_THEME_RGB = (241, 140, 185)
+
+# v1.26：预生成的图标文件（用户头像）。有就用真图标，缺了回落纯色 PNG。
+_ICON_DIR = _Path(__file__).resolve().parent.parent / "static" / "img"
+_ICON_FILES = {
+    16: "favicon-16.png", 32: "favicon-32.png", 48: "favicon-48.png",
+    96: "icon-96.png", 180: "apple-touch-icon.png",
+    192: "icon-192.png", 512: "icon-512.png",
+}
 
 
 def render_fallback(request) -> Response:
@@ -53,8 +63,17 @@ def icon_response(request) -> Response:
     except (TypeError, ValueError):
         size = 192
     size = max(16, min(512, size))
+    content = b""
+    name = _ICON_FILES.get(size)
+    if name:
+        try:
+            content = (_ICON_DIR / name).read_bytes()
+        except OSError:
+            content = b""
+    if not content:
+        content = _png_solid(size, _THEME_RGB)
     return Response(
-        content=_png_solid(size, _THEME_RGB),
+        content=content,
         media_type="image/png",
         headers={"Cache-Control": "public, max-age=86400"},
     )

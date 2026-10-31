@@ -1646,3 +1646,141 @@ svg.bi { width:15px; height:15px; fill:currentColor; flex:none; }
   .hero-title { font-size:18px; }
   .hero-badge { right:10px; top:10px; }
 }
+
+
+/* ============================================================
+   第 23 节 · V1.26 运行账本（RunLedger）
+   —— 任务分组、历史表新增列、精确停止按钮
+   ============================================================ */
+
+.task-group + .task-group { margin-top: 18px; }
+
+.task-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--line);
+}
+.task-group-head .tg-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: .02em;
+}
+.task-group-head .tg-count {
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--primary-soft, rgba(241, 140, 185, .16));
+  color: var(--primary);
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+
+/* 历史表：运行 ID / 退出码 / 停止 */
+.hist-runid {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.hist-exit {
+  display: inline-block;
+  min-width: 30px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  text-align: center;
+}
+.hist-exit.ok      { background: var(--green-bg); color: var(--green); }
+.hist-exit.bad     { background: var(--red-bg);   color: var(--red); }
+.hist-exit.neutral { background: rgba(0, 0, 0, .05); color: var(--muted); }
+html[data-theme="dark"] .hist-exit.neutral { background: rgba(255, 255, 255, .08); }
+
+.btn-stop-run {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+  border-radius: 5px;
+  border: 1px solid rgba(239, 68, 68, .35);
+  background: transparent;
+  color: var(--red);
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+.btn-stop-run:hover { background: var(--red-bg); border-color: var(--red); }
+.btn-stop-run:disabled { opacity: .45; cursor: not-allowed; }
+
+/* 运行中行轻微高亮，方便一眼找到该点哪个「停止」 */
+.hist-table tr.is-running td { background: rgba(241, 140, 185, .07); }
+html[data-theme="dark"] .hist-table tr.is-running td { background: rgba(241, 140, 185, .1); }
+
+/* 最近运行卡片 */
+.run-list { display: flex; flex-direction: column; gap: 6px; }
+.run-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: var(--hover);
+  font-size: 12.5px;
+}
+.run-row .rr-task { font-weight: 600; color: var(--text); min-width: 84px; }
+.run-row .rr-id { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+.run-row .rr-st { margin-left: auto; }
+.run-row .rr-dur { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+@media (max-width: 640px) {
+  .task-group-head { margin-bottom: 8px; }
+  .run-row { flex-wrap: wrap; gap: 4px 8px; }
+  .run-row .rr-st { margin-left: 0; }
+}
+
+/* v1.26：任务卡在分组里更紧凑，说明文字限制两行，卡片等高 */
+.task-group .task-grid { gap: 12px; }
+.task-group .task-card { padding: 12px 10px 10px; }
+.task-group .task-card .label { font-size: 13.5px; }
+.task-group .task-card .desc {
+  font-size: 11px;
+  min-height: 30px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.task-group .task-card .icon svg { width: 22px; height: 22px; }
+
+/* v1.26：运行输出查看器 */
+.run-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-bottom: 10px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.run-meta b { color: var(--text); font-weight: 600; }
+.run-log {
+  max-height: 52vh;
+  overflow: auto;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, .035);
+  border: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text);
+}
+html[data-theme="dark"] .run-log { background: rgba(255, 255, 255, .04); }
+.run-log .lg-e { color: var(--red); }
+.run-log .lg-w { color: var(--orange); }

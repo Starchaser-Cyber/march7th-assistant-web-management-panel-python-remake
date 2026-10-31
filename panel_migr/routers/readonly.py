@@ -13,6 +13,8 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from services import history as hist
 from services import logs as lg
+from services import runs as runs_mod
+from services import tasklist
 from services import monitor as mon
 from services import eventdb
 from services import outcome as oc_mod
@@ -204,8 +206,47 @@ def h_task_stats(request):
     return JSONResponse(stats_mod.task_success_stats(inst, days))
 
 
+def h_runs(request):
+    """v1.26：运行账本列表（最近 N 次，含退出码与实时状态）。"""
+    inst = _inst(request)
+    try:
+        limit = max(1, min(100, _to_int(request.query_params.get("limit"), 30)))
+    except Exception:
+        limit = 30
+    items = runs_mod.list_runs(inst, limit=limit)
+    return JSONResponse({"ok": True, "items": items, "latest": runs_mod.latest_run(inst)})
+
+
+def h_run_log(request):
+    """v1.26：读某次运行的输出（ANSI 已清洗）。"""
+    inst = _inst(request)
+    rid = str(request.query_params.get("run_id") or "").strip()
+    if not rid:
+        rid = (runs_mod.latest_run(inst) or {}).get("run_id") or ""
+    if not rid or not runs_mod.valid_run_id(rid):
+        return JSONResponse({"ok": False, "err": "缺少或非法的 run_id"}, status_code=400)
+    try:
+        lines = max(20, min(2000, _to_int(request.query_params.get("lines"), 300)))
+    except Exception:
+        lines = 300
+    d = runs_mod.read_log(inst, rid, lines=lines)
+    return JSONResponse({"ok": True, "run_id": rid, **d,
+                         "status": runs_mod.run_status(inst, rid)})
+
+
+def h_tasks(request):
+    """v1.26：容器真实任务表（分组）。容器探测失败时回落 config.TASKS。"""
+    inst = _inst(request)
+    force = str(request.query_params.get("force") or "") in ("1", "true", "yes")
+    return JSONResponse({"ok": True, "groups": tasklist.grouped(inst, force=force),
+                         "count": len(tasklist.tasks(inst, force=force))})
+
+
 GET_HANDLERS = {
     "status": h_status,
+    "runs": h_runs,
+    "run_log": h_run_log,
+    "tasks": h_tasks,
     "log": h_log,
     "running": h_running,
     "monitor": h_monitor,

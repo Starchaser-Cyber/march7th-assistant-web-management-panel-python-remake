@@ -41,8 +41,8 @@ def _stub_tasks(monkeypatch, started):
     monkeypatch.setattr(W, "ensure_running", lambda inst, timeout=15.0: {"started": False})
     monkeypatch.setattr(
         W, "task_start",
-        lambda inst, sub: started.append(sub) or {"code": 0, "out": ""})
-    monkeypatch.setattr(W, "history_add", lambda inst, k, l: None)
+        lambda inst, sub, label="", **kw: started.append(sub) or {"code": 0, "out": "", "run_id": "r-" + sub})
+    monkeypatch.setattr(W, "history_add", lambda inst, k, l, run_id="": None)
 
 
 # ---------- 1. PRG：303 + Location + 消息经 GET 显示一次即清 ----------

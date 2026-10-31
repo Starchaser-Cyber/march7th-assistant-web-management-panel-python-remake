@@ -4,10 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <title>M7A WebUI · March7th 管理面板</title>
-<meta name="theme-color" content="#ec4899">
+<meta name="theme-color" content="#f18cb9">
 <link rel="manifest" href="?manifest=1">
-<link rel="icon" type="image/png" href="?icon=1&size=192">
-<link rel="apple-touch-icon" href="?icon=1&size=192">
+<link rel="icon" type="image/png" sizes="16x16" href="/static/img/favicon-16.png?v={{ PANEL_VERSION }}">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png?v={{ PANEL_VERSION }}">
+<link rel="icon" type="image/png" sizes="48x48" href="/static/img/favicon-48.png?v={{ PANEL_VERSION }}">
+<link rel="icon" type="image/png" sizes="96x96" href="/static/img/icon-96.png?v={{ PANEL_VERSION }}">
+<link rel="shortcut icon" href="/static/img/favicon.ico?v={{ PANEL_VERSION }}">
+<link rel="apple-touch-icon" sizes="180x180" href="/static/img/apple-touch-icon.png?v={{ PANEL_VERSION }}">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -16,7 +20,7 @@
 </head>
 <body>
 
-{% set TASK_IC = {'main':'play','daily':'list','power':'bolt','notify':'alert','divergentloop':'star','universe':'target','currencywars':'trophy','currencywarsloop':'sync'} %}
+{% set TASK_IC = {'main':'play','routine':'calendar','daily':'list','power':'bolt','notify':'alert','divergentloop':'star','divergent':'star','divergenttemp':'star','universe':'target','universe_gui':'target','universe_update':'update','currencywars':'trophy','currencywarsloop':'sync','currencywarstemp':'trophy','fight':'drop','fight_gui':'drop','fight_update':'update','forgottenhall':'shield','purefiction':'bookshelf','apocalyptic':'alert','game':'play','game_update':'update','game_pre_download':'download','app_update':'update','mobileui_update':'update','redemption':'gift','screen_test':'view'} %}
 {% set OPS_IC = {'restart':'restart','stop_task':'fail','stop_loop':'fail','stop':'fail'} %}
 {% set GRP_IC = {'basic':'config','instance':'target','daily':'gift','activity':'star','schedule':'clock','notify':'alert','notify_serverchan':'send','notify_bark':'send','notify_dingtalk':'send','notify_pushplus':'send','notify_wechat':'send','notify_lark':'send','notify_telegram':'send','notify_gotify':'send','notify_discord':'send','notify_smtp':'send','notify_webhook':'send','notify_matrix':'list','other':'config'} %}
 <!-- v1.15+：磨砂玻璃背景光斑层（纯装饰，pointer-events:none，不参与交互） -->
@@ -466,6 +470,27 @@
 
       <div class="card">
         <h2><span class="icon"><svg><use href="/static/icons.svg#i-tasks"></use></svg></span> 执行任务</h2>
+        {% if TASK_GROUPS %}
+        {# v1.26：任务表以容器 `main.py --list` 为准（27 个），按 6 组分区渲染 #}
+        {% for g in TASK_GROUPS %}
+        <div class="task-group">
+          <div class="task-group-head">
+            <span class="tg-name">{{ g['label'] }}</span>
+            <span class="tg-count">{{ g['items']|length }}</span>
+          </div>
+          <div class="task-grid">
+            {% for t in g['items'] %}
+            <div class="task-card">
+              <div class="icon"><svg><use href="/static/icons.svg#i-{{ TASK_IC.get(t['key'], 'play') }}"></use></svg></div>
+              <div class="label">{{ t['label'] }}</div>
+              <div class="desc">{{ TASK_DESC.get(t['key'], '') or t['key'] }}{% if not t['pausable'] %} · 不可暂停{% endif %}</div>
+              <form method="post">{{ csrf_field() }}<input type="hidden" name="action" value="{{ t['key'] }}"><button type="submit" class="btn primary small">执行</button></form>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+        {% else %}
         <div class="task-grid">
           {% for key, t in TASKS.items() %}
           <div class="task-card">
@@ -476,6 +501,7 @@
           </div>
           {% endfor %}
         </div>
+        {% endif %}
       </div>
 
       <div class="card">
@@ -489,23 +515,32 @@
         <div class="hist-week" id="histWeek"></div>
         <div class="hist-table-wrap">
           <table class="hist-table">
-            <thead><tr><th>任务</th><th>开始时间</th><th>耗时</th><th>状态</th><th style="text-align:right;">操作</th></tr></thead>
+            <thead><tr><th>任务</th><th>开始时间</th><th>耗时</th><th>状态</th><th>退出码</th><th>运行 ID</th><th style="text-align:right;">操作</th></tr></thead>
             <tbody id="histBody">
               {% if  not histItems %}
-              <tr><td colspan="5" class="hist-empty">暂无任务执行记录，点击上方任务按钮即可开始记录</td></tr>
+              <tr><td colspan="7" class="hist-empty">暂无任务执行记录，点击上方任务按钮即可开始记录</td></tr>
               {% else %}{% for hi in histItems %}
-              <tr>
+              <tr{% if hi['status'] == 'running' %} class="is-running"{% endif %}>
                 <td data-label="任务">{{ hi['task_label'] }}</td>
                 <td data-label="开始时间">{{ hi['start_str'] }}</td>
                 <td data-label="耗时">{{ hi['duration_str'] }}</td>
                 <td data-label="状态"><span class="hist-badge" style="background:{{ hi['status_color'] }};">{{ hi['status_label'] }}</span></td>
-                <td data-label="操作" style="text-align:right;"><button type="button" class="btn small gray" onclick="histViewLog()"><svg class="bi"><use href="/static/icons.svg#i-log"></use></svg>查看日志</button></td>
+                <td data-label="退出码">
+                  {% if 'exit' in hi %}<span class="hist-exit {{ 'ok' if hi['exit'] == 0 else ('bad' if hi['exit'] > 0 else 'neutral') }}">{{ hi['exit'] }}</span>{% else %}<span class="hist-exit neutral">--</span>{% endif %}
+                </td>
+                <td data-label="运行 ID"><span class="hist-runid">{{ hi.get('run_id') or '--' }}</span></td>
+                <td data-label="操作" style="text-align:right;white-space:nowrap;">
+                  {% if hi['status'] == 'running' and hi.get('run_id') %}
+                  <button type="button" class="btn-stop-run" onclick="stopRun('{{ hi['run_id'] }}', this)">停止</button>
+                  {% endif %}
+                  <button type="button" class="btn small gray" onclick="histViewRun('{{ hi.get('run_id') or '' }}')"><svg class="bi"><use href="/static/icons.svg#i-log"></use></svg>查看日志</button>
+                </td>
               </tr>
               {% endfor %}{% endif %}
             </tbody>
           </table>
         </div>
-        <p class="tip" style="margin:10px 0 0;">面板记录每次任务的开始时间与耗时；小助手日志里没有明确的结束标记，运行中的任务以「日志静默超过 {{ (HISTORY_IDLE_SECONDS)|int }} 秒」判定结束、以「容器未运行且日志长时间无更新」判定中断。最多保留最近 {{ (HISTORY_KEEP)|int }} 条，按实例分别保存在 <code>data/history_容器名.json</code>。</p>
+        <p class="tip" style="margin:10px 0 0;">v1.26 起每次运行都有一份运行账本（<code>logs/runs/&lt;运行 ID&gt;.json</code>），退出码与结束时间由账本直接给出，不再靠日志静默推断；「停止」按钮按运行 ID 精确结束该次运行，不会重启容器、也不影响其它任务。历史最多保留最近 {{ (HISTORY_KEEP)|int }} 条，按实例分别保存在 <code>data/history_容器名.json</code>。</p>
       </div>
 
       <!-- v1.15+：计划任务（由宿主机 cron 每分钟调用面板触发，不依赖程序常驻） -->
@@ -777,6 +812,25 @@
 </div><!-- /layout -->
 
 <!-- ===== 实例管理弹窗 ===== -->
+<!-- v1.26：运行账本 —— 单次运行输出查看器 -->
+<div class="modal-overlay" id="runModal" style="display:none;" onclick="if(event.target===this)closeRunLog()">
+  <div class="modal" style="max-width:920px;">
+    <div class="modal-head">
+      <div class="modal-title">运行输出 <span class="hist-runid" id="runModalId"></span></div>
+      <button type="button" class="icon-btn" onclick="closeRunLog()" style="font-size:18px;">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="run-meta" id="runModalMeta"></div>
+      <pre class="run-log" id="runModalLog">加载中…</pre>
+      <div class="btn-group" style="margin-top:10px;">
+        <button type="button" class="btn small gray" onclick="reloadRunLog()"><svg class="bi"><use href="/static/icons.svg#i-sync"></use></svg>刷新</button>
+        <button type="button" class="btn small gray" onclick="copyRunLog()"><svg class="bi"><use href="/static/icons.svg#i-copy"></use></svg>复制全文</button>
+        <button type="button" class="btn small gray" onclick="closeRunLog()">关闭</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="instModal" style="display:none;" onclick="if(event.target===this)closeInstModal()">
   <div class="modal">
     <div class="modal-head">

@@ -108,8 +108,8 @@ def test_ensure_running_timeout(monkeypatch):
 def _stub_task(monkeypatch, ensure_ret, task_ret):
     import routers.write as W
     monkeypatch.setattr(W, "ensure_running", lambda inst, timeout=15.0: ensure_ret)
-    monkeypatch.setattr(W, "task_start", lambda inst, sub: task_ret)
-    monkeypatch.setattr(W, "history_add", lambda inst, k, l: None)
+    monkeypatch.setattr(W, "task_start", lambda inst, sub, label="", **kw: task_ret)
+    monkeypatch.setattr(W, "history_add", lambda inst, k, l, run_id="": None)
 
 
 def test_post_task_autostart_chain(monkeypatch):

@@ -33,6 +33,7 @@ from services.configops import (
     yaml_format_val,
     yaml_read_simple,
 )
+from services import runs, tasklist
 from services.containers import compose, container_is_running, ensure_running, task_start
 from services.flash import flash
 from services.history import history_add, history_write
@@ -518,18 +519,40 @@ def h_instance_delete(request, form, session, sid):
 
 
 def _task_action(request, form, session, sid, key: str):
-    label = cfg.TASKS[key]
     inst = instance_current(session)
+    # v1.26：任务表以容器 --list 为准（27 个）。config.TASKS 里的 8 个老任务直接放行
+    # （不探容器，省一次 docker exec）；其余 key 才去问容器。
+    if key in cfg.TASKS:
+        label = cfg.TASKS[key]
+    else:
+        bad = tasklist.resolve(inst, key)
+        if bad:
+            return F(err=bad)
+        label = tasklist.label_of(inst, key)
     ck = ensure_running(inst)                      # v1.21：小助手没跑先自动拉起再执行任务
     if ck.get("err"):
         return F(err=ck["err"])
-    r = task_start(inst, key)
+    r = task_start(inst, key, label)
     if r["code"] == 0:
-        history_add(inst, key, label)
+        history_add(inst, key, label, run_id=r.get("run_id") or "")
         if ck.get("started"):
             return F(msg=f"小助手已自动启动，任务「{label}」已后台开始")
         return F(msg=f"任务「{label}」已后台启动")
     return F(msg="任务启动失败：" + r["out"])
+
+
+def h_stop_run(request, form, session, sid):
+    """v1.26：按 run_id 精确停止单次运行（不重启容器，不影响排队中的其它任务）。"""
+    inst = instance_current(session)
+    rid = str((form or {}).get("run_id") or "").strip()
+    if not rid:
+        rid = (runs.latest_run(inst) or {}).get("run_id") or ""
+    if not rid:
+        return F(err="找不到正在运行的任务记录，无法精确停止")
+    r = runs.stop_run(inst, rid)
+    if r.get("err"):
+        return F(err=r["err"])
+    return F(msg=r.get("msg") or "已发送停止信号")
 
 
 # ===== 容器操作 7（W3）=====
@@ -949,6 +972,7 @@ POST_HANDLERS = {
     "update_image": h_update_image,
     "stop_task": h_stop_task,
     "stop_loop": h_stop_loop,
+    "stop_run": h_stop_run,
     "stop": h_stop,
     "do_update": h_do_update,
     # 配置
@@ -1003,15 +1027,20 @@ async def handle_post(request) -> Response:
     if not csrf_check(form, session):
         return await render(request, F(err="请求验证失败，请重试"))
 
+    # v1.26：动态任务（容器 --list 里除 config.TASKS 之外的 19 个）也走任务分发
+    dyn_task = (action not in POST_HANDLERS and action not in cfg.TASKS
+                and tasklist.resolve(instance_current(session), action) == "")
+
     # v1.21.1：任务类 action 短窗口幂等——刷新重放/连点 15 秒内同会话同任务只执行一次
-    if action in cfg.TASKS:
+    if action in cfg.TASKS or dyn_task:
         now = time.monotonic()
         tkey = f"{sid}|{action}"
         prev = _TASK_COOLDOWN.get(tkey)
         if prev is not None and now - prev < TASK_COOLDOWN_SECONDS:
+            _lbl = cfg.TASKS.get(action) or action
             return await render(
                 request,
-                F(msg=f"任务「{cfg.TASKS[action]}」刚刚已启动，重复提交已忽略"))
+                F(msg=f"任务「{_lbl}」刚刚已启动，重复提交已忽略"))
         _TASK_COOLDOWN[tkey] = now
         if len(_TASK_COOLDOWN) > 256:
             for k in [k for k, v in _TASK_COOLDOWN.items()
@@ -1023,6 +1052,9 @@ async def handle_post(request) -> Response:
         alert_quiet(instance_current(session), 600)
 
     handler = POST_HANDLERS.get(action)
+    if handler is None and dyn_task:
+        def handler(request, form, session, sid, _k=action):
+            return _task_action(request, form, session, sid, _k)
     if handler is None:
         # v1.22 M6：Python 为唯一后端；未知 action 不再回源，本地渲染面板页兜底。
         # （回滚开关打开时仍走网关转发）

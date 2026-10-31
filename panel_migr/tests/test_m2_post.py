@@ -77,6 +77,7 @@ def test_registry_covers_all_36_actions():
         "instance_switch", "instance_save", "instance_delete",
         "restart", "update", "update_image", "stop_task", "stop_loop",
         "stop", "do_update", "set_after_finish", "alert_save", "alert_test",
+        "stop_run",
         "set_update_mode", "set_monitor_interval", "save_config_form",
         "save_config_text", "backup_rollback", "history_clear", "alert_clear",
         "schedule_add", "schedule_del", "schedule_toggle",
@@ -87,7 +88,7 @@ def test_registry_covers_all_36_actions():
         "morning_report_now", "upstream_check_now", "disk_check_now",
     }
     assert set(POST_HANDLERS) == expected
-    assert len(expected) == 40
+    assert len(expected) == 41
 
 
 # ---------- W1：认证 4 + CSRF + 危险静默 ----------
@@ -243,8 +244,8 @@ def test_non_dangerous_action_not_quiet(monkeypatch):
     calls = []
     monkeypatch.setattr(W, "alert_quiet", lambda inst, sec: calls.append(1))
     monkeypatch.setattr(W, "ensure_running", lambda inst, timeout=15.0: {"started": False})
-    monkeypatch.setattr(W, "task_start", lambda inst, sub: {"code": 0, "out": ""})
-    monkeypatch.setattr(W, "history_add", lambda inst, k, l: None)
+    monkeypatch.setattr(W, "task_start", lambda inst, sub, label="", **kw: {"code": 0, "out": "", "run_id": "r1"})
+    monkeypatch.setattr(W, "history_add", lambda inst, k, l, run_id="": None)
     post("daily")
     assert calls == []
 
@@ -327,8 +328,8 @@ def test_all_8_task_actions(monkeypatch):
 
     started, added = [], []
     monkeypatch.setattr(W, "ensure_running", lambda inst, timeout=15.0: {"started": False})
-    monkeypatch.setattr(W, "task_start", lambda inst, sub: started.append(sub) or {"code": 0, "out": ""})
-    monkeypatch.setattr(W, "history_add", lambda inst, k, l: added.append(k))
+    monkeypatch.setattr(W, "task_start", lambda inst, sub, label="", **kw: started.append(sub) or {"code": 0, "out": "", "run_id": "r-" + sub})
+    monkeypatch.setattr(W, "history_add", lambda inst, k, l, run_id="": added.append(k))
     for key, label in cfg.TASKS.items():
         r = post(key)
         assert r.status_code == 200
@@ -341,7 +342,7 @@ def test_task_start_failure(monkeypatch):
     import routers.write as W
 
     monkeypatch.setattr(W, "ensure_running", lambda inst, timeout=15.0: {"started": False})
-    monkeypatch.setattr(W, "task_start", lambda inst, sub: {"code": 1, "out": "boom"})
+    monkeypatch.setattr(W, "task_start", lambda inst, sub, label="", **kw: {"code": 1, "out": "boom"})
     r = post("power")
     assert "任务启动失败：boom" in r.text
 

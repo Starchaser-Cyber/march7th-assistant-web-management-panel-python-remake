@@ -414,21 +414,108 @@ function renderHistoryRows(items) {
   var tb = document.getElementById('histBody');
   if (!tb) return;
   if (!items || !items.length) {
-    tb.innerHTML = '<tr><td colspan="5" class="hist-empty">暂无任务执行记录，点击上方任务按钮即可开始记录</td></tr>';
+    tb.innerHTML = '<tr><td colspan="7" class="hist-empty">暂无任务执行记录，点击上方任务按钮即可开始记录</td></tr>';
     return;
   }
   var html = '';
   for (var i = 0; i < items.length; i++) {
     var it = items[i];
-    html += '<tr>'
+    var exitCell = '<span class="hist-exit neutral">--</span>';
+    if (it.exit !== undefined && it.exit !== null) {
+      var cls = it.exit === 0 ? 'ok' : (it.exit > 0 ? 'bad' : 'neutral');
+      exitCell = '<span class="hist-exit ' + cls + '">' + escapeHtml(String(it.exit)) + '</span>';
+    }
+    var stopBtn = '';
+    if (it.status === 'running' && it.run_id) {
+      stopBtn = '<button type="button" class="btn-stop-run" onclick="stopRun(\'' +
+        escapeHtml(it.run_id) + '\', this)">停止</button>';
+    }
+    html += '<tr' + (it.status === 'running' ? ' class="is-running"' : '') + '>'
       + '<td data-label="任务">' + escapeHtml(it.task_label || '') + '</td>'
       + '<td data-label="开始时间">' + escapeHtml(it.start_str || '') + '</td>'
       + '<td data-label="耗时">' + escapeHtml(it.duration_str || '') + '</td>'
       + '<td data-label="状态"><span class="hist-badge" style="background:' + escapeHtml(it.status_color || '') + ';">' + escapeHtml(it.status_label || '') + '</span></td>'
-      + '<td data-label="操作" style="text-align:right;"><button type="button" class="btn small gray" onclick="histViewLog()">📝 查看日志</button></td>'
+      + '<td data-label="退出码">' + exitCell + '</td>'
+      + '<td data-label="运行 ID"><span class="hist-runid">' + escapeHtml(it.run_id || '--') + '</span></td>'
+      + '<td data-label="操作" style="text-align:right;white-space:nowrap;">' + stopBtn
+      + '<button type="button" class="btn small gray" onclick="histViewRun(\'' + escapeHtml(it.run_id || '') + '\')"><svg class="bi"><use href="/static/icons.svg#i-log"></use></svg>查看日志</button></td>'
       + '</tr>';
   }
   tb.innerHTML = html;
+}
+
+/* ===== v1.26：运行账本 —— 输出查看器 ===== */
+var _runModalRid = '';
+function openRunLog(runId) {
+  _runModalRid = runId || '';
+  var o = document.getElementById('runModal');
+  if (o) o.style.display = 'flex';
+  var idEl = document.getElementById('runModalId');
+  if (idEl) idEl.textContent = _runModalRid || '(最近一次)';
+  var pre = document.getElementById('runModalLog');
+  if (pre) pre.textContent = '加载中…';
+  reloadRunLog();
+}
+function closeRunLog() {
+  var o = document.getElementById('runModal');
+  if (o) o.style.display = 'none';
+}
+function reloadRunLog() {
+  var pre = document.getElementById('runModalLog');
+  var metaEl = document.getElementById('runModalMeta');
+  var q = '?ajax=run_log&lines=600' + (_runModalRid ? ('&run_id=' + encodeURIComponent(_runModalRid)) : '');
+  fetch(q).then(function(r){ return r.json(); }).then(function(d){
+    if (!d || !d.ok) { if (pre) pre.textContent = '读取失败：' + ((d && d.err) || '未知错误'); return; }
+    _runModalRid = d.run_id || _runModalRid;
+    var st = d.status || {};
+    if (metaEl) {
+      var bits = [];
+      bits.push('任务 <b>' + escapeHtml(st.task_label || st.task_key || '--') + '</b>');
+      bits.push('状态 <b>' + escapeHtml(st.status || '--') + '</b>');
+      if (st.exit_code !== null && st.exit_code !== undefined) {
+        bits.push('退出码 <b>' + escapeHtml(String(st.exit_code)) + '</b>' + (st.exit_label ? '（' + escapeHtml(st.exit_label) + '）' : ''));
+      }
+      if (st.duration) bits.push('耗时 <b>' + st.duration + ' 秒</b>');
+      metaEl.innerHTML = bits.join('');
+    }
+    var txt = d.lines || '(暂无输出)';
+    if (pre) {
+      pre.textContent = txt;
+      pre.scrollTop = pre.scrollHeight;
+    }
+  }).catch(function(){
+    if (pre) pre.textContent = '读取失败：网络错误';
+  });
+}
+function copyRunLog() {
+  var pre = document.getElementById('runModalLog');
+  if (!pre) return;
+  var t = pre.textContent || '';
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(t).then(function(){ miniToast('已复制到剪贴板'); },
+                                          function(){ miniToast('复制失败，请长按选择复制'); });
+  } else {
+    miniToast('当前浏览器不支持自动复制');
+  }
+}
+function histViewRun(runId) {
+  if (runId) openRunLog(runId);
+  else { switchTab('log'); refreshLog(); }
+}
+
+/* v1.26：按运行 ID 精确停止（不重启容器）。复用 _aalertNow 的统一 POST 助手。 */
+function stopRun(runId, btn) {
+  if (!runId) return;
+  if (!confirm('停止这次运行？\n\n只结束该次任务，容器不会重启，其它任务不受影响。')) return;
+  if (btn) { btn.disabled = true; btn.textContent = '停止中…'; }
+  _aalertNow('stop_run', '已发送停止信号', { run_id: runId }, function(d) {
+    if (d && d.ok) {
+      setTimeout(loadHistory, 1200);
+    } else if (btn) {
+      btn.disabled = false;
+      btn.textContent = '停止';
+    }
+  });
 }
 function loadHistory() {
   fetch('?ajax=history').then(function(r){ return r.json(); }).then(function(d){
@@ -1616,14 +1703,16 @@ function _atestAlert(sev) {
     miniToast('发送失败：网络错误');
   });
 }
-function _aalertNow(action, okTip) {
+function _aalertNow(action, okTip, extra, cb) {
   var fd = new FormData();
   fd.append('action', action);
+  if (extra) { for (var k in extra) { if (extra[k] !== undefined && extra[k] !== null) fd.append(k, extra[k]); } }
   _acsrf(fd);
   miniToast('处理中…');
   fetch('action', { method: 'POST', body: fd, headers: {'Accept': 'application/json'} }).then(_actionJson).then(function(d) {
     miniToast(d && d.ok ? (d.msg || okTip) : ('失败：' + (d && d.msg ? d.msg : '未知错误')));
-  }).catch(function() { miniToast('失败：网络错误'); });
+    if (typeof cb === 'function') cb(d);
+  }).catch(function() { miniToast('失败：网络错误'); if (typeof cb === 'function') cb(null); });
 }
 function checkDiskNow() { _aalertNow('disk_check_now', '磁盘检查完成'); }
 function morningReportNow() { _aalertNow('morning_report_now', '晨报已发送'); }

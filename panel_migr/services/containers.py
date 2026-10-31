@@ -8,6 +8,7 @@ import time
 from shlex import quote
 
 import config as cfg
+from services import runs
 from services.history import history_add, history_write, history_read
 from services.instances import instance_container, instance_dir
 from services.shell import run_cmd
@@ -18,9 +19,22 @@ def compose(inst: dict, args: str) -> dict:
     return run_cmd(f"cd {quote(instance_dir(inst))} && docker compose {args}")
 
 
-def task_start(inst: dict, sub: str) -> dict:
-    """等价 PHP task_start()：docker exec -d <容器> python main.py <sub>。"""
-    return run_cmd(f"docker exec -d {quote(instance_container(inst))} python main.py {quote(sub)}")
+def task_start(inst: dict, sub: str, label: str = "",
+               after_finish: str = "", invoker: str = "panel") -> dict:
+    """启动任务并建运行账本（v1.26 RunLedger）。
+
+    旧实现是 `docker exec -d <容器> python main.py <sub>`（fire-and-forget），
+    启动后拿不到 pid / 退出码 / 输出。现在走 services.runs 的 shell 包装层：
+    仍然不需要升级小助手镜像，但账本里会有 run_id、pid、exit、完整日志。
+
+    返回沿用 run_cmd 的形状（调用方只看 code/out）：
+    - 成功 `{"code": 0, "out": "", "run_id": "<rid>", "start_ts": N}`
+    - 失败 `{"code": 1, "out": "<原因>"}`
+    """
+    r = runs.start_run(inst, sub, label or sub, after_finish=after_finish, invoker=invoker)
+    if r.get("err"):
+        return {"code": 1, "out": str(r["err"])}
+    return {"code": 0, "out": "", "run_id": r["run_id"], "start_ts": r["start_ts"]}
 
 
 def container_is_running(inst: dict) -> bool:
@@ -94,11 +108,19 @@ def op_stop(inst: dict) -> dict:
 def op_task(inst: dict, action: str) -> dict:
     """$TASKS 分支：启动任务 + 记执行历史（PHP 用 $msg 承载失败，不是 $err）。"""
     label = cfg.TASKS.get(action, action)
-    r = task_start(inst, action)
+    r = task_start(inst, action, label)
     if r["code"] == 0:
-        history_add(inst, action, label)
+        history_add(inst, action, label, run_id=r.get("run_id") or "")
         return {"msg": f"任务「{label}」已后台启动"}
     return {"msg": "任务启动失败：" + r["out"]}
+
+
+def op_stop_run(inst: dict, run_id: str) -> dict:
+    """v1.26：按 run_id 精确停止一次运行（不再重启整个容器）。"""
+    r = runs.stop_run(inst, run_id)
+    if r.get("err"):
+        return {"err": r["err"]}
+    return {"msg": r.get("msg") or "已发送停止信号"}
 
 
 # ===== 任务历史（与 services/history 复用）=====
@@ -113,5 +135,5 @@ def history_clear(inst: dict) -> dict:
 __all__ = [
     "compose", "task_start", "container_is_running", "container_status", "ensure_running",
     "op_restart", "op_update", "op_stop_task", "op_stop_loop", "op_stop",
-    "op_task", "history_clear", "history_read",
+    "op_task", "op_stop_run", "history_clear", "history_read",
 ]

@@ -35,6 +35,7 @@ from services.instances import (
 )
 from services.logs import latest_log_path
 from services.paneldefs import CONFIG_GROUPS, OPS, TASKS
+from services import tasklist
 from services.schedule import (
     config_scheduled_tasks_count,
     schedule_days_label,
@@ -89,6 +90,25 @@ def _upstream_info(inst: dict) -> dict:
     except Exception:
         return {}
 
+
+def _task_desc() -> dict:
+    """v1.26：任务说明表 = paneldefs 的 desc（8 个老任务） ∪ tasklist.DESCS（容器独有 19 个）。"""
+    d = {k: (v.get("desc") or "") for k, v in TASKS.items()}
+    d.update(tasklist.DESCS)
+    return d
+
+
+def _task_groups(inst: dict) -> list:
+    """v1.26：把容器真实任务表按组展开给模板。
+
+    容器探测有 300s 缓存（services/tasklist.py），首次渲染会多一次
+    `docker exec python main.py --list`；失败时回落 config.TASKS 的 8 个任务，
+    保证任务页永远不是空的。
+    """
+    try:
+        return tasklist.grouped(inst)
+    except Exception:
+        return []
 
 def _panel_context(request, inst: dict, notify_check) -> dict:
     """PHP 页面段 12 个前置计算块 + 页面数据常量的等价供给。"""
@@ -189,6 +209,9 @@ def _panel_context(request, inst: dict, notify_check) -> dict:
         "TASKS": TASKS,
         "OPS": OPS,
         "CONFIG_GROUPS": CONFIG_GROUPS,
+        # v1.26：容器 --list 的真实任务表（27 个，分 6 组）；探测失败回落 TASKS
+        "TASK_GROUPS": _task_groups(inst),
+        "TASK_DESC": _task_desc(),
         "BACKUP_KEEP": cfg.BACKUP_KEEP,
         "HISTORY_IDLE_SECONDS": cfg.HISTORY_IDLE_SECONDS,
         "HISTORY_KEEP": cfg.HISTORY_KEEP,
@@ -297,6 +320,8 @@ def render_page(request, *, msg=None, err=None, notify_check=None) -> str:
         "TASKS": TASKS,
         "OPS": OPS,
         "CONFIG_GROUPS": CONFIG_GROUPS,
+        "TASK_GROUPS": [],
+        "TASK_DESC": {},
     }
     if authed:
         inst = instance_current(session)

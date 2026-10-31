@@ -172,15 +172,27 @@ def test_compose_dir_with_shell_metachar_is_quoted(cmds, monkeypatch):
     assert cmds[0].startswith("cd '/srv/$(rm -rf /)' && docker compose ps")
 
 
-def test_task_start_builds_expected_command(cmds):
-    C.task_start({"id": "x"}, "daily")
-    assert cmds == ["docker exec -d m7a python main.py daily"]
+def test_task_start_delegates_to_run_ledger(monkeypatch):
+    """v1.26：task_start 不再直接 docker exec -d，而是交给 runs.start_run 建账本。"""
+    seen = {}
+
+    def fake_start(inst, sub, label="", after_finish="", invoker="panel"):
+        seen.update({"sub": sub, "label": label, "after_finish": after_finish,
+                     "invoker": invoker})
+        return {"ok": True, "run_id": "20260101-000000-abcd", "start_ts": 123}
+
+    monkeypatch.setattr(C.runs, "start_run", fake_start)
+    r = C.task_start({"id": "x"}, "daily", "日常任务")
+    assert r["code"] == 0
+    assert r["run_id"] == "20260101-000000-abcd"
+    assert seen["sub"] == "daily" and seen["label"] == "日常任务"
+    assert seen["invoker"] == "panel"
 
 
-def test_task_start_quotes_container_and_sub(cmds, monkeypatch):
-    monkeypatch.setattr(C, "instance_container", lambda _i: "m7a; reboot")
-    C.task_start({"id": "x"}, "a b")
-    assert cmds[0] == "docker exec -d 'm7a; reboot' python main.py 'a b'"
+def test_task_start_failure_surfaces_reason(monkeypatch):
+    monkeypatch.setattr(C.runs, "start_run", lambda *_a, **_k: {"err": "容器没跑"})
+    r = C.task_start({"id": "x"}, "daily")
+    assert r["code"] == 1 and "容器没跑" in r["out"]
 
 
 # ===================== container_is_running =====================
@@ -332,10 +344,11 @@ def test_op_stop_fail(monkeypatch):
 # ===================== op_task =====================
 
 def test_op_task_ok_records_history(monkeypatch):
-    monkeypatch.setattr(C, "task_start", lambda *_a: {"code": 0, "out": ""})
+    monkeypatch.setattr(C, "task_start", lambda *_a, **_k: {"code": 0, "out": "",
+                                                             "run_id": "r1"})
     added = []
     monkeypatch.setattr(C, "history_add",
-                        lambda i, a, label: added.append((a, label)) or True)
+                        lambda i, a, label, run_id="": added.append((a, label)) or True)
     r = C.op_task({"id": "x"}, "daily")
     assert "已后台启动" in r["msg"]
     assert added and added[0][0] == "daily"
