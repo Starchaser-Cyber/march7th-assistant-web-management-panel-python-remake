@@ -1,5 +1,36 @@
 # Changelog
 
+## V1.26.2（2026-10-31）
+
+**一句话总结**：配置页新增「环境变量覆盖提醒」——排查发现镜像 Dockerfile 内置的 8 个 `MARCH7TH_*` 环境变量会**静默盖住 `config.yaml`**（只要环境变量存在就覆盖），面板改了配置、容器里实际没变。本版把「面板可编辑却被环境变量盖住」的字段在配置页顶部逐条列出来，并说明怎么才能真正改掉。
+
+✨ 新增
+
+- **`services/envoverride.py`**：内置 `ENV_OVERRIDE_MAP`（8 键，与上游 `module/config/config.py` 的 `_ENV_OVERRIDE_MAP` 一一对应）；`container_env()` 用 `docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}'` 读容器环境变量（10 秒短缓存，读失败返回空、不给配置页添乱）；`overridden()` 只报告**面板真能编辑**的字段，避免噪音
+- **配置页顶部橙色提示块「环境变量覆盖提醒（N 项）」**：逐条列出被盖住的字段（中文名 + 环境变量名 + 当前值，如 `cloud_game_enable`←`MARCH7TH_CLOUD_GAME_ENABLE=true`），并说明「要真正改掉，需要修改容器编排文件里的 `environment:`（或删掉镜像自带的同名 ENV），再重建容器；面板不会替你改这些变量」。接入 `services/pagectx.py` 注入 + 模板 `{{ envOverrideHtml | safe }}` + 新 CSS 节（顺带补上一直缺失的 `--mono` 等宽字体变量，`.run-log` 等自 v1.26.0 起就在引用）
+
+🧪 测试
+
+- 新增 `tests/test_v1262_env_override.py`（37 例）：`parse_env_output`（只按第一个 `=` 切、只留 `MARCH7TH_` 前缀、跳过空行/畸形行）、`ENV_OVERRIDE_MAP` 键集必须等于上游 8 键、`container_env` 缓存/失败容错/按容器分键、`overridden` 过滤逻辑、`env_override_html` 渲染与 HTML 转义、模板/CSS/接入断言
+- 全量 **1,349 passed**（唯一失败仍是既有环境性用例 `tests/test_v1221.py::test_apply_zip_keeps_existing_venv`）；`ruff check .` 全部通过
+
+## V1.26.1（2026-10-31）
+
+**一句话总结**：修两个 P0——「在面板保存配置，小助手容器里根本不生效」（config.yaml 单文件挂载断链）、「连点两次任务会起两个并发进程互杀」（任务并发互斥）；并给 compose 补 `init: true` 让容器自己回收僵尸进程。
+
+🐛 修复
+
+- **config.yaml 单文件挂载断链**（P0-1）：compose 以**单文件 bind mount** 挂载 `config.yaml`，而旧代码用「临时文件 + `os.replace`」原子写——`rename` 会**换掉 inode**，bind mount 从此指向删除的文件（`mountinfo` 出现 `//deleted`），面板写哪、容器读哪完全对不上。修复：`phpfile.atomic_write_text()` 新增 `inplace=True` 模式（`_inplace_overwrite()`：打开原 inode、`lseek(0)`、循环 write、`ftruncate`、`fsync`），config 相关 4 个写入口（`config_save_form` / `config_save_text` / `restore_config` / `h_restore_config`）全部改为原位覆写；文件不存在时才回退 `os.replace`。已用「挂载进容器 → 面板保存 → 容器内读取」三段实测验证（含线上真路径）
+- **任务并发互杀**（P0-2）：`runs.active_run()` 启动前检查账本里是否有 running/paused 的任务，有则拒绝并提示「已有任务在运行（任务名 · 运行ID），请等它结束或先停止它」；`containers.task_start()` / `routers.write.py::_task_action` 同步传递，busy 走红色错误横幅。参数校验（`_TASK_RE`）仍在互斥锁之前，非法任务名不会被「已有任务在跑」掩盖。互斥锁只扫最近 5 条账本（全量扫要逐条 `docker exec` 探 pid，点启动会卡）
+- **compose 补 `init: true`**（P2）：旧配置下 Chrome 崩溃留下的无主(defunct)进程挂在容器 Python 主进程下不被回收，实测积压 129 个僵尸；加 `init` 后由 PID 1 回收，重建容器后实测僵尸数为 0
+
+🧪 测试
+
+- 新增 `tests/test_v1261_bindmount_and_lock.py`（19 例）：`_inplace_overwrite` 保持 inode（含对照组证明测的是真差异）、截尾/保 mode/建缺失文件/清临时文件、`active_run` 各状态、busy 传递链路、参数校验优先
+- 全量 **1,311 passed**（唯一失败仍是既有环境性用例）；`ruff check .` 全部通过
+
+> ⚠️ 部署注意：compose 的 `init: true` 与配置重新挂载需要**重建容器**（`docker compose up -d --force-recreate`）才生效。
+
 ## V1.26.0（2026-10-31）
 
 **一句话总结**：给小助手补一套**运行账本**——面板不再「发一条命令就不管了」，每次任务都有运行 ID、进程号、真实退出码、完整输出和结束时间；任务表也从写死的 8 个改成从容器 `main.py --list` 现取，27 个任务全露出来；「停止任务」不再重启整个容器，改成按运行 ID 精确结束。

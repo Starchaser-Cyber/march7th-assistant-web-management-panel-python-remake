@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# m7a_panel V1.24.7 打包 + 发布脚本（分步执行，每步都可单独跑）
+# m7a_panel V1.26.2 打包 + 发布脚本（分步执行，每步都可单独跑）
 #
 # 用法：
 #   bash release.sh check          # 发版前检查（版本三处一致 / 语法 / 测试）
@@ -13,7 +13,7 @@ set -u
 ROOT=/home/huangsongping/dsh-workspace/m7a-fix
 DL=/home/huangsongping/dsh-workspace/m7a-dl
 AUD=/home/huangsongping/dsh-workspace/m7a-audit
-VER=1.24.7
+VER=1.26.2
 TAG=V${VER}
 REPO=Starchaser-Cyber/march7th-assistant-web-management-panel-python-remake
 PY=/tmp/auditvenv/bin/python
@@ -75,10 +75,11 @@ PYEOF
 }
 
 cmd_page() {
-  "$PY" - "$DL" <<'PYEOF'
-import hashlib, sys, zipfile
+  TAG="$TAG" "$PY" - "$DL" <<'PYEOF'
+import hashlib, os, sys, zipfile
 from pathlib import Path
 dl = Path(sys.argv[1])
+tag = os.environ["TAG"]
 tpl = (dl / "index.html.tpl").read_text("utf-8")
 
 def info(name):
@@ -93,8 +94,8 @@ def info(name):
         sha=hashlib.sha256(p.read_bytes()).hexdigest(),
     )
 
-rel = info("V1.24.7.zip")
-aud = info("V1.24.7-audit.zip")
+rel = info(tag + ".zip")
+aud = info(tag + "-audit.zip")
 rpt = info("m7a-audit-report.zip")
 html = (tpl
     .replace("__REL_SIZE__", rel["size"]).replace("__REL_COUNT__", rel["count"]).replace("__REL_SHA__", rel["sha"])
