@@ -108,11 +108,17 @@ function closeSidebar() {
 }
 
 /* ===== 页面切换 ===== */
+var _activeTab = '';
 function switchTab(name) {
+  var changed = (_activeTab !== name);
+  _activeTab = name;
   document.querySelectorAll('.page').forEach(function(el) { el.classList.remove('active'); });
   document.querySelectorAll('.nav-item, .mobile-tabbar .tab-item').forEach(function(el) { el.classList.toggle('active', el.dataset.tab === name); });
   var panel = document.getElementById('panel-' + name);
   if (panel) panel.classList.add('active');
+  // v1.25.1：换页后把视口滚回顶部。此前切页会保留上一页的滚动位置——
+  // 从很长的配置页切到概览页会直接落在半空中。同页重复点击不重置。
+  if (changed) { try { window.scrollTo(0, 0); } catch(e) {} }
   try { localStorage.setItem('m7a_tab', name); } catch(e) {}
   if (name === 'log') refreshLog();
   if (name === 'tasks') { loadHistory(); loadTaskStats(); }
