@@ -146,7 +146,9 @@ def test_outcome_daily_buckets_by_day_and_sums():
     _seed("other", today0 + 3600, {"task_key": "daily", "task_label": "日常",
                                    "outcome": {"dungeon": 99, "score": 999}})
 
-    d = outcome.outcome_daily(_inst(Path("/tmp")), days=7)
+    # 显式给查询 now，避免凌晨 0~2 点运行时把“今天 01:00/02:00”的事件
+    # 当成未来事件排除（outcome_daily 默认使用真实 time.time()）。
+    d = outcome.outcome_daily(_inst(Path("/tmp")), days=7, now=today0 + 4 * 3600)
     assert d["total_tasks"] == 3
     assert d["range_days"] == 7
     assert len(d["list"]) == 7
