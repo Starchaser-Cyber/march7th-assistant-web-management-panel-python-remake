@@ -24,7 +24,7 @@ HISTORY_KEEP = 200               # 历史最多保留条数
 SCHEDULE_WINDOW_SECONDS = 1800   # 计划任务补跑窗口（M2+）
 
 # ===== 面板自身更新（与 index.php define() 对齐，M4 可用环境变量覆盖）=====
-PANEL_VERSION = os.environ.get("M7A_PANEL_VERSION", "1.26.2")
+PANEL_VERSION = os.environ.get("M7A_PANEL_VERSION", "1.27.0")
 UPDATE_ENABLED = True
 UPDATE_TYPE = "github"           # gitea / github
 _UPDATE_HOST_RAW = os.environ.get("M7A_UPDATE_HOST", "https://github.com").strip().rstrip("/")
@@ -135,3 +135,11 @@ UPSTREAM_HTTP_TIMEOUT = 6            # 上游接口超时（秒），失败静�
 
 # 磁盘探针巡检间隔（秒）；每日晨报每分钟判一次「是否到点」，不需要额外常量。
 DISK_CHECK_IV = 6 * 60
+
+# ===== 错误循环预警（v1.27）=====
+# 本体日志在窗口分钟内出现 >= 阈值条重复错误（截图失败/超时/未识别界面等）
+# 时推 warn 级告警；默认关闭（用户显式开启，避免在未配置通道时打扰）。
+LOOP_ALERT_ENABLE = False
+LOOP_ALERT_WINDOW = 10               # 统计窗口（分钟），面板内可调 1-60
+LOOP_ALERT_MIN_COUNT = 10            # 窗口内重复错误条数阈值，面板内可调 1-1000
+LOOP_ALERT_CHECK_IV = 60             # 检测间隔（秒）

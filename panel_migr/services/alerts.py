@@ -33,13 +33,14 @@ import re
 import shlex
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 import config as cfg
 from services.containers import container_is_running
 from services.history import history_sync, history_data_file
 from services.instances import panel_config, instance_dir
-from services.logs import before_deadline, elapsed_ok
+from services.logs import before_deadline, elapsed_ok, filter_log, latest_log_path
 from services.updateops import http_get, http_post, version_gt
 
 log = logging.getLogger("m7a.alerts")
@@ -79,6 +80,9 @@ _ALERT_DEFAULT = {
     "upstream_latest": "",      # 上游最新版本（数字部分）
     "upstream_notified": "",    # 已提醒过的上游版本（避免重复提醒）
     "upstream_error": "",       # 上次上游检查的失败说明
+    # v1.27：错误循环预警（本体日志重复错误检测）
+    "loop_last_check": 0,       # 上次错误循环检查时间（epoch 秒）
+    "loop_last_count": 0,       # 上次检查命中重复错误的行数
 }
 
 # 告警分级（顺序即展示/推送优先级）
@@ -87,8 +91,8 @@ _SEVERITIES = ("info", "warn", "critical")
 # alert_tick 最小间隔（秒）；时钟回拨时 elapsed_ok 会判为到期
 _TICK_IV = 45
 
-# 面板里可选的推送通道
-_CHANNELS = ("bark", "serverchan", "webhook")
+# 面板里可选的推送通道（v1.27 新增企微机器人 Webhook）
+_CHANNELS = ("bark", "serverchan", "webhook", "wecom")
 
 _STR_FIELDS = (
     "disk_level", "disk_path", "morning_last",
@@ -246,6 +250,10 @@ def alert_cfg(inst: dict) -> dict:
         "morning_enable": _cfg_flag(c, "morning_report_enable", bool(cfg.MORNING_REPORT_ENABLE)),
         "morning_time": _cfg_hhmm(c, "morning_report_time", str(cfg.MORNING_REPORT_TIME)),
         "upstream_enable": _cfg_flag(c, "upstream_check_enable", True),
+        # v1.27：错误循环预警
+        "loop_enable": _cfg_flag(c, "loop_alert_enable", False),
+        "loop_window": _cfg_int(c, "loop_alert_window", int(cfg.LOOP_ALERT_WINDOW), 1, 60),
+        "loop_min_count": _cfg_int(c, "loop_alert_min_count", int(cfg.LOOP_ALERT_MIN_COUNT), 1, 1000),
     }
 
 
@@ -258,6 +266,9 @@ def alert_send(title: str, body: str, override: dict | None = None,
     severity: info / warn / critical（v1.24 M2-5）。通道解析顺序：
     override["channels"][severity] → override["channel"] → alert_cfg()。
     向后兼容：老调用只传 (title, body, override)，此时 severity 默认 warn。
+
+    v1.27：新增企微机器人 Webhook 通道（wecom）—— target 填
+    https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxx 完整地址。
     """
     cfgv = override if override is not None else alert_cfg({})
     sev = str(severity or "warn")
@@ -284,6 +295,19 @@ def alert_send(title: str, body: str, override: dict | None = None,
                       {"title": title, "desp": body}, 8, False)
         code = int(r["code"])
         return {"ok": 200 <= code < 300, "msg": f"Server酱 返回 HTTP {code}"}
+    if ch == "wecom":
+        # 企微群机器人：target 是完整 webhook URL，POST JSON 文本消息。
+        ok_url, why = _webhook_url_ok(target)
+        if not ok_url:
+            return {"ok": False, "msg": why}
+        r = http_post(target, {"msgtype": "text",
+                               "text": {"content": f"{title}\n{body}"}},
+                      8, True)
+        code = int(r["code"])
+        msg = "企微返回 HTTP " + str(code)
+        if code == 200:
+            msg = "企微已推送"
+        return {"ok": 200 <= code < 300, "msg": msg}
     ok_url, why = _webhook_url_ok(target)
     if not ok_url:
         return {"ok": False, "msg": why}
@@ -1175,7 +1199,96 @@ def _health_tick_locked(inst: dict) -> dict:
         out["upstream"] = upstream_check(inst)
     except Exception as e:
         out["upstream"] = {"ok": False, "msg": str(e)}
+    # v1.27：错误循环预警（60s 节流，自身有 force）
+    try:
+        out["loop"] = loop_patrol(inst)
+    except Exception as e:
+        out["loop"] = {"ok": False, "msg": str(e)}
     return out
+
+
+# ===== v1.27：错误循环预警 =====
+
+# 判定「重复错误」的行模式（命中任意一条即计数；窗口内 >= 阈值触发告警）。
+# 2026-10-31 事故模板：云游戏卡加载页后每秒刷「截图失败：没有找到游戏窗口」、
+# 每 ~23 分钟一次「截图超时」，日志 171k 行全部是这类重复 → 面板静默 11 小时。
+LOOP_ERROR_RES = (
+    r"截图失败",
+    r"没有找到游戏窗口",
+    r"截图超时",
+    r"当前界面：未知",
+    r"获取当前界面超时",
+)
+_LOOP_ERROR_RE = re.compile("|".join(LOOP_ERROR_RES))
+
+
+def _loop_body(inst: dict, cnt: int, window_min: int) -> str:
+    path = latest_log_path(inst)
+    name = os.path.basename(path) if path else "日志"
+    return (
+        f"最近 {window_min} 分钟内，{name} 出现 {cnt} 条重复错误"
+        f"（截图失败 / 超时 / 未识别界面等）。\n"
+        f"这通常意味着本体陷入异常循环（如云游戏卡加载页、OCR 全失败）。\n"
+        f"建议：打开面板「日志」页查看，或重启容器。"
+    )
+
+
+def loop_patrol(inst: dict, force: bool = False) -> dict:
+    """错误循环检测：统计本体日志窗口内的重复错误密度，超阈值推 warn 告警。
+
+    与磁盘/晨报/上游同一套状态管理（_ALERT_DEFAULT 里的 loop_last_check /
+    loop_last_count），节流 cfg.LOOP_ALERT_CHECK_IV（60s）由抽查端点与
+    alert_tick 共同驱动，重复调用安全。默认关闭（cfg 默认 loop_alert_enable=0）。
+    """
+    with _STATE_LOCK:
+        s = alert_state_load(inst)
+        now = int(time.time())
+        cfgv = alert_cfg(inst)
+        if not cfgv.get("loop_enable"):
+            return {"ok": True, "enabled": False}
+        window_min = int(cfgv.get("loop_window") or cfg.LOOP_ALERT_WINDOW)
+        min_count = int(cfgv.get("loop_min_count") or cfg.LOOP_ALERT_MIN_COUNT)
+        if not force and not elapsed_ok(now, s.get("loop_last_check"),
+                                        int(cfg.LOOP_ALERT_CHECK_IV)):
+            return {"ok": True, "throttled": True, "count": int(s.get("loop_last_count") or 0)}
+        s["loop_last_check"] = now
+
+        # 读最新日志尾部（filter_log 内部做 tail，这里只取整行文本）
+        path = latest_log_path(inst)
+        if not path:
+            return {"ok": True, "checked": False, "count": 0}
+        r = filter_log(path, {"lines": 2000})
+        lines = r.get("lines") or []
+
+        # 只统计窗口时间窗内的行（行首 %Y-%m-%d %H:%M:%S）
+        cutoff = now - window_min * 60
+        cnt = 0
+        for line in lines:
+            if not _LOOP_ERROR_RE.search(line):
+                continue
+            ts = None
+            try:
+                ts = datetime.strptime(line[:19], "%Y-%m-%d %H:%M:%S").timestamp()
+            except ValueError:
+                pass
+            if ts is None or ts >= cutoff:
+                cnt += 1
+        s["loop_last_count"] = cnt
+
+        alerted = False
+        if cnt >= min_count:
+            lpk = s.setdefault("last_push_kind_at", {})
+            # 去重窗口：同一 kind 在 ALERT_DEDUP_WINDOW 内不重复推送
+            if elapsed_ok(now, lpk.get("error_loop"), int(cfg.ALERT_DEDUP_WINDOW)):
+                pushed = _push_events(
+                    inst, s,
+                    [("error_loop", "M7A 本体疑似异常循环",
+                      _loop_body(inst, cnt, window_min), "warn")],
+                    now,
+                )
+                alerted = bool(pushed)
+        alert_state_save(inst, s)
+        return {"ok": True, "enabled": True, "count": cnt, "alerted": alerted}
 
 
 # ===== 巡检心跳 =====

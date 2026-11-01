@@ -287,6 +287,7 @@
             <option value="bark"{{ (' selected' if (((alertVals['alert_channel']) | default('bark', true)) == 'bark') else '') }}>Bark（iOS / macOS 推送）</option>
             <option value="serverchan"{{ (' selected' if (((alertVals['alert_channel']) | default('', true)) == 'serverchan') else '') }}>Server酱（微信推送）</option>
             <option value="webhook"{{ (' selected' if (((alertVals['alert_channel']) | default('', true)) == 'webhook') else '') }}>Webhook（自定义 JSON 地址）</option>
+            <option value="wecom"{{ (' selected' if (((alertVals['alert_channel']) | default('', true)) == 'wecom') else '') }}>企业微信（群机器人）</option>
           </select>
         </div>
         <div class="cfg-row">
@@ -303,6 +304,7 @@
               <option value="bark"{{ (' selected' if cur == 'bark' else '') }}>{{ lb }}：Bark</option>
               <option value="serverchan"{{ (' selected' if cur == 'serverchan' else '') }}>{{ lb }}：Server酱</option>
               <option value="webhook"{{ (' selected' if cur == 'webhook' else '') }}>{{ lb }}：Webhook</option>
+              <option value="wecom"{{ (' selected' if cur == 'wecom' else '') }}>{{ lb }}：企业微信</option>
             </select>
             {% endfor %}
           </div>
@@ -339,6 +341,15 @@
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="upstreamCheckEnable" style="width:18px;height:18px;"{{ (' checked' if ((alertVals['upstream_check_enable'] | default('1', true)) | string) == '1' else '') }}> 开启</label>
             <span style="color:var(--muted);">本机 {{ ('v' ~ _up.get('local')) if _up.get('local') else '未知' }}{{ (' ／ 上游 v' ~ _up.get('latest')) if _up.get('latest') else '' }}</span>
             <button type="button" class="btn small gray" onclick="checkUpstreamNow()"><svg class="bi"><use href="/static/icons.svg#i-sync"></use></svg>立即检查</button>
+          </div>
+        </div>
+        <!-- v1.27：错误循环预警 -->
+        <div class="cfg-row">
+          <div class="cfg-label">错误循环预警<span class="cfg-tip">本体内日志在窗口内出现 N 条重复错误（截图失败 / 超时 / 未识别界面等）时推送警告；去重 2 分钟</span></div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:14px;">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="loopAlertEnable" style="width:18px;height:18px;"{{ (' checked' if ((alertVals['loop_alert_enable'] | default('0', true)) | string) == '1' else '') }}> 开启</label>
+            <span>窗口</span><input type="number" id="loopAlertWindow" class="cfg-input-text" style="width:82px;" min="1" max="60" value="{{ alertVals['loop_alert_window'] | default(10, true) }}">分钟
+            <span>阈值</span><input type="number" id="loopAlertMinCount" class="cfg-input-text" style="width:82px;" min="1" max="1000" value="{{ alertVals['loop_alert_min_count'] | default(10, true) }}">条
           </div>
         </div>
         <div class="btn-group">

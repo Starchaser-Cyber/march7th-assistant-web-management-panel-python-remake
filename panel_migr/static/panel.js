@@ -1665,6 +1665,9 @@ function _afillAlertForm(fd) {
   fd.append('morning_report_enable', _achk('morningReportEnable') ? '1' : '0');
   fd.append('morning_report_time', _aval('morningReportTime', '08:00'));
   fd.append('upstream_check_enable', _achk('upstreamCheckEnable') ? '1' : '0');
+  fd.append('loop_alert_enable', _achk('loopAlertEnable') ? '1' : '0');
+  fd.append('loop_alert_window', _aval('loopAlertWindow', '10'));
+  fd.append('loop_alert_min_count', _aval('loopAlertMinCount', '10'));
 }
 function saveAlert() {
   var btn = _ael('alertSaveBtn');

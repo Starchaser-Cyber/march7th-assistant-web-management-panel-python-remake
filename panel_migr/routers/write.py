@@ -629,19 +629,20 @@ def h_set_after_finish(request, form, session, sid):
 
 
 def _alert_channels(form) -> dict:
-    """v1.24：分级通道（留空 = 继承主通道）→ 面板配置键。"""
+    """v1.24：分级通道（留空 = 继承主通道）→ 面板配置键。v1.27 新增企微。"""
+    _CH = ("bark", "serverchan", "webhook", "wecom")
     out = {}
     for sev in ("info", "warn", "critical"):
         v = str(form.get("alert_channel_" + sev) or "").strip()
-        out["alert_channel_" + sev] = v if v in ("bark", "serverchan", "webhook") else ""
+        out["alert_channel_" + sev] = v if v in _CH else ""
     return out
 
 
 def h_alert_save(request, form, session, sid):
-    ch_map = ("bark", "serverchan", "webhook")
+    _CH = ("bark", "serverchan", "webhook", "wecom")
     en = "1" if form.get("alert_enable") else "0"
     ch = str(form.get("alert_channel") or "")
-    ch = ch if ch in ch_map else "bark"
+    ch = ch if ch in _CH else "bark"
     tg = str(form.get("alert_target") or "").strip()
 
     def _int(key, dft, lo, hi):
@@ -682,6 +683,10 @@ def h_alert_save(request, form, session, sid):
         "morning_report_time": f"{hh:02d}:{mm:02d}",
         # v1.24 M2-8：上游本体更新提醒
         "upstream_check_enable": "1" if form.get("upstream_check_enable") else "0",
+        # v1.27：错误循环预警
+        "loop_alert_enable": "1" if form.get("loop_alert_enable") else "0",
+        "loop_alert_window": _int("loop_alert_window", cfg.LOOP_ALERT_WINDOW, 1, 60),
+        "loop_alert_min_count": _int("loop_alert_min_count", cfg.LOOP_ALERT_MIN_COUNT, 1, 1000),
     }
     upd.update(_alert_channels(form))
     if panel_config_save(upd):
@@ -690,8 +695,8 @@ def h_alert_save(request, form, session, sid):
 
 
 def h_alert_test(request, form, session, sid):
-    """v1.24：支持按级别测试（severity=info/warn/critical）。"""
-    ch_map = ("bark", "serverchan", "webhook")
+    """v1.24：支持按级别测试（severity=info/warn/critical）。v1.27 支持企微。"""
+    _CH = ("bark", "serverchan", "webhook", "wecom")
     ch = str(form.get("alert_channel") or "")
     sev = str(form.get("severity") or "warn")
     if sev not in ("info", "warn", "critical"):
@@ -699,7 +704,7 @@ def h_alert_test(request, form, session, sid):
     name = {"info": "提示", "warn": "警告", "critical": "严重"}[sev]
     ov = {
         "enable": True,
-        "channel": ch if ch in ch_map else "bark",
+        "channel": ch if ch in _CH else "bark",
         "target": str(form.get("alert_target") or "").strip(),
     }
     r = alert_send(f"M7A 面板测试告警（{name}）",
