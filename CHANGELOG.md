@@ -1,5 +1,20 @@
 # Changelog
 
+## V1.27.0（2026-11-01）
+
+**一句话总结**：这次事故的「解药」——10 月 31 日小助手云游戏卡加载页、日志 17 万行全是截图错误、静默空转 11 小时没人发现。本版给面板加「错误循环预警」：自动盯本体日志，窗口内重复错误（截图失败/超时/未识别界面等）超过阈值就推 warn 告警到手机；同时把推送通道补上**企业微信群机器人**。
+
+✨ 新增
+
+- **错误循环预警（`loop_patrol`）**：`services/alerts.py` 新增 `loop_patrol()`——读最新日志尾部 2000 行，统计窗口内命重复错误模式（`截图失败`/`没有找到游戏窗口`/`截图超时`/`当前界面：未知`/`获取当前界面超时`）的行数，≥ 阈值且距上次推送超过去重窗口（2 分钟）时推 `warn` 级告警「M7A 本体疑似异常循环」（文案含 窗口/条数/日志名、建议查日志或重启容器）。默认关闭，配置页「异常告警」卡新增一行（窗口分钟 1-60 / 阈值条数 1-1000，均面板可调）。挂在 `health_tick` 检修炼路上（cron `?alerter=1` + 面板打开期间约 45 秒巡检都驱动），自身 60 秒节流
+- **企业微信推送通道（wecom）**：推送通道白名单从 3 个扩到 4 个（Bark / Server酱 / Webhook / **企业微信**）。接收地址填企微群机器人完整 Webhook URL（`https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxx`），发送时 POST `{"msgtype":"text","text":{"content":"标题\n正文"}}`；沿用 `_webhook_url_ok` 的 SSRF 防护（拒绝内网/回环/保留地址）。主通道与三级分级通道（提示/警告/严重）都有企微选项
+- **状态机**：`_ALERT_DEFAULT` 新增 `loop_last_check` / `loop_last_count`；`alert_cfg()` 新增 `loop_enable` / `loop_window` / `loop_min_count` 三个配置键（默认关、10 分钟、10 条）
+
+🧪 测试
+
+- 新增 `tests/test_v127_loop_alert.py`（16 例）：loop_patrol 默认关/节流/无日志/阈值下不推/超阈值推一次/去重窗口内不重复/状态落盘/force 绕过；wecom 分支请求体与 SSRF 拒内网；`h_alert_save` roundtrip 保存 loop 三键；`_alert_channels` 白名单含 wecom；模板/JS 静态断言
+- 全量 **1,365 passed**（唯一失败仍是既有环境性用例 `tests/test_v1221.py::test_apply_zip_keeps_existing_venv`）；`ruff check .` 全部通过
+
 ## V1.26.2（2026-10-31）
 
 **一句话总结**：配置页新增「环境变量覆盖提醒」——排查发现镜像 Dockerfile 内置的 8 个 `MARCH7TH_*` 环境变量会**静默盖住 `config.yaml`**（只要环境变量存在就覆盖），面板改了配置、容器里实际没变。本版把「面板可编辑却被环境变量盖住」的字段在配置页顶部逐条列出来，并说明怎么才能真正改掉。
