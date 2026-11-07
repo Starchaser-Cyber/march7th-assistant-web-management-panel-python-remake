@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# m7a_panel V1.27.0 打包 + 发布脚本（分步执行，每步都可单独跑）
+# m7a_panel V1.28.0 打包 + 发布脚本（分步执行，每步都可单独跑）
 #
 # 用法：
 #   bash release.sh check          # 发版前检查（版本三处一致 / 语法 / 测试）
@@ -13,7 +13,7 @@ set -u
 ROOT=/home/huangsongping/dsh-workspace/m7a-fix
 DL=/home/huangsongping/dsh-workspace/m7a-dl
 AUD=/home/huangsongping/dsh-workspace/m7a-audit
-VER=1.27.0
+VER=1.28.0
 TAG=V${VER}
 REPO=Starchaser-Cyber/march7th-assistant-web-management-panel-python-remake
 PY=/tmp/auditvenv/bin/python
