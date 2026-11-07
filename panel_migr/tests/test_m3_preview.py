@@ -69,9 +69,16 @@ def fake_run_cmd(monkeypatch):
 
 
 @pytest.fixture
-def h264_present():
-    """假定机器有 libx264（不真探测）：让 ws264 用例与机器环境解耦。"""
+def h264_present(monkeypatch):
+    """假定机器有 libx264（不真探测）：让 ws264 用例与机器环境解耦。
+
+    v1.28.0 补桩：ffmpeg_available() 除编码器缓存外还会 shutil.which(ffmpeg)。
+    ffmpeg_available() 为假时 WS 直接回「H.264 档不可用」，token 校验根本走不到
+    ——CI runner 可能没装 ffmpeg（2026-11-07 实锤 test_ws264_rejects_bad_token 红），
+    which 一并打桩，用例才真正与机器环境解耦。
+    """
     pv._ENC_CACHE = [" V....D libx264              libx264 H.264 / AVC (codec h264)"]
+    monkeypatch.setattr(pv.shutil, "which", lambda *a, **k: "/usr/bin/ffmpeg")
     yield
     pv.reset_codec_cache()
 
