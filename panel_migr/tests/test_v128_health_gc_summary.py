@@ -281,6 +281,21 @@ def test_classify_error_rules():
     assert logs.classify_error("未知问题") == "other"
 
 
+def test_classify_error_real_world_lines():
+    """线上真实错误行（2026-11-07 日志）必须能归类，不能全落到「其他」。
+
+    这两条是真实出现过的：进入余烬兑换失败 / 当前界面：未知。
+    前者属于任务流程失败，后者属于界面识别失败。
+    """
+    assert logs.classify_error("2026-11-07 16:29:42,140 | ERROR | 进入余烬兑换失败") == "task"
+    assert logs.classify_error("2026-11-07 16:29:55,771 | ERROR | 当前界面：未知") == "ui"
+    # 顺序敏感：配置类关键词要先于泛化的「失败」
+    assert logs.classify_error("2026-11-07 10:00:00 | ERROR | 配置加载失败") == "config"
+    # 规则表里每个 bucket 的关键词都必须能在日志里真实命中（kw 为空只允许 other）
+    for key, _label, kw, _needles in logs._ERROR_RULES:
+        assert kw, f"bucket {key} 缺少可点击过滤关键词"
+
+
 # ===== h_log 集成 =====
 
 def test_h_log_returns_summary(monkeypatch, tmp_path):

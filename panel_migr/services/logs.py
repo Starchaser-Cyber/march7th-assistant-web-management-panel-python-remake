@@ -146,8 +146,10 @@ _ERROR_RULES: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
     ("timeout", "超时", "超时", ("超时", "timed out", "timeout")),
     ("network", "网络 / 端口", "端口", ("端口", "连接", "Errno", "Connection", "websocket", "HTTP")),
     ("session", "登录 / 会话", "登录", ("登录", "会话", "session", "cookie")),
+    ("ui", "界面识别失败", "界面", ("界面", "未识别", "找不到")),
     ("browser", "浏览器 / 驱动", "浏览器", ("chrome", "Chrome", "浏览器", "webdriver", "session id")),
     ("config", "配置 / 文件", "配置", ("配置", "yaml", "config", "文件", "路径")),
+    ("task", "任务 / 流程失败", "失败", ("失败", "异常")),
 )
 _ERROR_OTHER = ("other", "其他错误", "")
 

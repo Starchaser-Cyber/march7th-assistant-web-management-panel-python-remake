@@ -4,14 +4,14 @@
 
 **一句话总结**：把「看不见的故障」摊到界面上 —— 告警通道自己坏掉时它不会告警，所以给它加一条健康看板；会话文件只增不减，所以加 TTL + 定时回收；日志页只能逐行翻，所以加错误聚合条。
 
-### 1. 告警通道健康看板（设置页）
+### 1. 告警通道健康看板（概览页告警卡）
 
 **背景**：2026-11-01 查到线上 `data/alert_state.json` 里 `push_fail_streak: 8`、`last_push_kind_at: {}` —— 也就是**一次都没推送成功过**，失败链是「Bark 返回 HTTP 400 → 重试次数用尽 → 已放弃」。面板全程静默：告警通道坏了，恰恰是最需要告警的时候，却没有任何地方能看出来。
 
 - `services/alerts.py` 新增 `alert_health(inst)`：读面板配置 + `alert_state.json`，输出 `{enabled, channel, channel_label, has_target, last_ok, last_fail, fail_msg, fail_kind, streak, pending, retry_count, backoff_until, level, label, color, detail}`。
 - 状态机 `level` 六档：`off`（未启用）→ `setup`（无接收地址）→ `crit`（冷静期内 / 从未成功 / 持续失败）→ `warn`（最近失败 / 尚未推送过）→ `ok`（通道正常）。
 - 状态机新增四个字段并纳入 `_STR_FIELDS` 清洗：`push_last_ok_at`、`push_last_fail_at`、`push_last_fail_msg`、`push_last_fail_kind`；`_push_events` 成功/失败分支、`_retry_succeeded`/`_retry_failed` 各自回填。
-- 设置页告警卡顶部新增健康条（`.ahbar`）：状态圆点 + 结论 + 一句原因 + 「发送测试告警」按钮（`warn`/`crit`/`setup` 三态下出现）。
+- 概览页告警卡顶部新增健康条（`.ahbar`）：状态圆点 + 结论 + 一句原因 + 「发送测试告警」按钮（`warn`/`crit`/`setup` 三态下出现）。
 - 新增 CSS 第 29 节（四态配色 + 深色主题 + 640px 折行）。
 
 ### 2. 会话 TTL 与定时回收
@@ -26,15 +26,16 @@
 
 **背景**：日志页只能逐行翻。171k 行里哪类错误占大头、有没有在持续刷，肉眼看不出来 —— 而「同一类错误刷了 11 小时」本身就是最关键的信号。
 
-- `services/logs.py` 新增 `classify_error(line)` 与 `error_summary(lines)`：统计总数、错误数、占比、按类别分布（截图/超时/网络端口/登录会话/浏览器驱动/配置文件/其他）、首末时间、TOP 类别。纯函数，输入就是页面上当前这批已过滤的行，**两边口径必然一致**。
+- `services/logs.py` 新增 `classify_error(line)` 与 `error_summary(lines)`：统计总数、错误数、占比、按类别分布（截图/超时/网络端口/登录会话/界面识别/浏览器驱动/配置文件/任务流程/其他）、首末时间、TOP 类别。纯函数，输入就是页面上当前这批已过滤的行，**两边口径必然一致**。
 - `routers/readonly.py` 的 `h_log` 返回体新增 `summary` 字段（加法，`ok`/`files`/`lines`/`total` 不变）。
 - 日志页 `.log-filter` 与 `#logCount` 之间新增 `.log-summary` 聚合条：`错误 N / M 行（P%）` + 各分类 chip + 时间跨度；**点 chip 直接把该类别填进关键词框重新过滤**。
 - 新增 CSS 第 30 节。
+- 规则经线上真实日志校准：部署后查 2026-11-07 日志发现 `当前界面：未知`、`进入余烬兑换失败` 都落进「其他错误」，补「界面识别失败」「任务流程失败」两类并把配置类关键词排在泛化的「失败」之前。
 
 ### 4. 质量数据
 
-- 新增测试 `panel_migr/tests/test_v128_health_gc_summary.py` **27 例**（alert_health 六分支 / state 四字段 / session_gc 七种边界 / error_summary 六例 / h_log 集成 / 前端静态断言）。
-- 全量 pytest：**1 failed, 1,392 passed, 1 skipped**（唯一失败是既有的环境性 `test_apply_zip_keeps_existing_venv`，非 root 下 `systemctl restart` 被拒）。
+- 新增测试 `panel_migr/tests/test_v128_health_gc_summary.py` **28 例**（alert_health 六分支 / state 四字段 / session_gc 七种边界 / error_summary 六例 / h_log 集成 / 前端静态断言）。
+- 全量 pytest：**1 failed, 1,393 passed, 1 skipped**（唯一失败是既有的环境性 `test_apply_zip_keeps_existing_venv`，非 root 下 `systemctl restart` 被拒）。
 - `ruff check` 全通过。
 
 ### 5. 升级说明
