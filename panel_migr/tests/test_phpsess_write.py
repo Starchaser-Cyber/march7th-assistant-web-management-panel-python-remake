@@ -151,6 +151,7 @@ def test_session_set_bypasses_guard(sticky_dir):
     if not _protected():
         pytest.skip("fs.protected_regular != 2，本环境不复现内核保护")
     f = _foreign_file(sticky_dir, "bypass1", "m7a_panel_auth|b:1;", 0o600)
+    _require_foreign(f)
     assert session_set("bypass1", "m7a_instance", "m7a") is True
     d = parse_session(f.read_text("utf-8"))
     assert d["m7a_panel_auth"] is True                    # 原键保留
@@ -164,6 +165,7 @@ def test_session_remove_bypasses_guard(sticky_dir):
     if not _protected():
         pytest.skip("fs.protected_regular != 2，本环境不复现内核保护")
     f = _foreign_file(sticky_dir, "bypass2", "a|b:1;m7a_panel_auth|b:1;", 0o666)
+    _require_foreign(f)
     assert session_remove("bypass2", "a") is True
     d = parse_session(f.read_text("utf-8"))
     assert "a" not in d and d["m7a_panel_auth"] is True
