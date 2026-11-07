@@ -119,6 +119,21 @@ def _env_override_html(inst: dict) -> str:
         return ""
 
 
+def _alert_health(inst: dict) -> dict:
+    """v1.28：告警通道健康度（只读 alert_state.json，失败回落最小结构）。
+
+    失败时返回 `enabled=False` 的最小结构而不是空 dict —— 模板里用
+    `alertHealth.get(...)` 取值，空 dict 会让整块静默消失，用户看不到「看板坏了」。
+    """
+    try:
+        from services.alerts import alert_health
+
+        return alert_health(inst)
+    except Exception:
+        return {"enabled": False, "level": "off", "label": "健康检查不可用",
+                "color": "gray", "detail": ""}
+
+
 def _panel_context(request, inst: dict, notify_check) -> dict:
     """PHP 页面段 12 个前置计算块 + 页面数据常量的等价供给。"""
     base = _cron_base(request, request.url.path)
@@ -199,6 +214,8 @@ def _panel_context(request, inst: dict, notify_check) -> dict:
     return {
         "cfgVals": cfg_vals,
         "alertVals": alert_vals,
+        # v1.28：告警通道健康看板（失败绝不拖垮整页渲染）
+        "alertHealth": _alert_health(inst),
         "_upstream": upstream_info,
         "afVal": af_val,
         "st_status": st_status,
@@ -334,6 +351,9 @@ def render_page(request, *, msg=None, err=None, notify_check=None) -> str:
         "TASK_DESC": {},
         # v1.26.2：未登录时不探测容器，占位空串（模板里渲染为空）
         "envOverrideHtml": "",
+        # v1.28：未登录时没有告警上下文
+        "alertHealth": {"enabled": False, "level": "off", "label": "",
+                        "color": "gray", "detail": ""},
     }
     if authed:
         inst = instance_current(session)

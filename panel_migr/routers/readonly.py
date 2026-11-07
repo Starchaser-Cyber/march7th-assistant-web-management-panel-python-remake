@@ -76,10 +76,13 @@ def h_log(request):
             "files": base_names,
             "total": r["total"],
             "lines": r["lines"],
+            # v1.28：错误聚合（口径 = 当前这批已过滤的行，页面上筛什么这里就算什么）
+            "summary": lg.error_summary(r["lines"]),
         })
     return JSONResponse({
         "ok": True, "file": None, "files": [], "total": 0,
         "lines": "(暂无日志文件，任务运行后会生成)",
+        "summary": lg.error_summary([]),
     })
 
 

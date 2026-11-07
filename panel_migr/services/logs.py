@@ -129,3 +129,77 @@ def filter_log(path: str, opts: dict) -> dict:
                 continue
         out.append(line)
     return {"lines": out, "total": len(out)}
+
+
+# ===== v1.28：日志错误聚合 =====
+# 背景：日志页只能逐行翻，171k 行里哪类错误占大头、有没有在持续刷，肉眼看不出来。
+# 2026-10-31 那次事故就是「同一类错误刷了 11 小时」——行数本身是信号，但界面没给。
+
+# 错误行判定：m7a 本体的日志级别用 | LEVEL | 包裹（与 filter_log 的 level_re 一致）。
+_ERROR_LEVEL_RE = re.compile(r"\|\s*(ERROR|CRITICAL|FATAL)\s*\|", re.I)
+
+# 分类规则（有序，先命中先归类）。key 是稳定标识，label 给人看，
+# kw 是「点这个分类要往关键词框里填什么」—— 必须是日志里真实出现的串，
+# 否则填进去命中 0 条（v1.28 首版就踩了这个坑：填显示名「截图 / 识别失败」）。
+_ERROR_RULES: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
+    ("screenshot", "截图 / 识别失败", "截图", ("截图", "识别", "ocr", "OCR")),
+    ("timeout", "超时", "超时", ("超时", "timed out", "timeout")),
+    ("network", "网络 / 端口", "端口", ("端口", "连接", "Errno", "Connection", "websocket", "HTTP")),
+    ("session", "登录 / 会话", "登录", ("登录", "会话", "session", "cookie")),
+    ("browser", "浏览器 / 驱动", "浏览器", ("chrome", "Chrome", "浏览器", "webdriver", "session id")),
+    ("config", "配置 / 文件", "配置", ("配置", "yaml", "config", "文件", "路径")),
+)
+_ERROR_OTHER = ("other", "其他错误", "")
+
+
+def classify_error(line: str) -> str:
+    """把一条错误行归到某个类别 key（未命中任何规则 → "other"）。"""
+    for key, _label, _kw, needles in _ERROR_RULES:
+        for nd in needles:
+            if nd in line:
+                return key
+    return _ERROR_OTHER[0]
+
+
+def error_summary(lines: list[str]) -> dict:
+    """统计错误行：总数、按类别分布、首末时间、最集中的类别。
+
+    纯函数（不读文件、不碰时间），输入就是日志页当前展示的那些行 ——
+    用户在页面上筛了什么，聚合就跟着算什么，两边口径必然一致。
+    每个 bucket 带 `kw`（可点击过滤的关键词，空 = 不可点击）。
+    """
+    total = len(lines)
+    buckets: dict[str, int] = {}
+    first_ts = None
+    last_ts = None
+    errors = 0
+    for line in lines:
+        if not _ERROR_LEVEL_RE.search(line):
+            continue
+        errors += 1
+        key = classify_error(line)
+        buckets[key] = buckets.get(key, 0) + 1
+        ts = _parse_line_ts(line[:19])
+        if ts is not None:
+            if first_ts is None or ts < first_ts:
+                first_ts = ts
+            if last_ts is None or ts > last_ts:
+                last_ts = ts
+
+    meta = {k: (lb, kw) for k, lb, kw, _ in _ERROR_RULES}
+    meta[_ERROR_OTHER[0]] = (_ERROR_OTHER[1], _ERROR_OTHER[2])
+    ordered = sorted(buckets.items(), key=lambda kv: (-kv[1], kv[0]))
+
+    def _bucket(k, n):
+        lb, kw = meta.get(k, (k, ""))
+        return {"key": k, "label": lb, "kw": kw, "count": n}
+
+    return {
+        "total": total,
+        "errors": errors,
+        "rate": round(errors * 100.0 / total, 1) if total else 0.0,
+        "buckets": [_bucket(k, n) for k, n in ordered],
+        "top": (_bucket(ordered[0][0], ordered[0][1]) if ordered else None),
+        "first_ts": int(first_ts) if first_ts is not None else 0,
+        "last_ts": int(last_ts) if last_ts is not None else 0,
+    }

@@ -13,8 +13,10 @@ import secrets
 import stat
 import string
 import threading
+import time
 from pathlib import Path
 
+import config
 from config import SESSION_FILE_MODE, SESSION_SAVE_PATH, SKEY
 
 log = logging.getLogger("m7a.phpsess")
@@ -309,3 +311,66 @@ def session_id(request) -> str:
 def sid_valid(sid: str) -> bool:
     """cookie 里的 sid 是否为合法 PHP 会话 id（页面会话引导用）。"""
     return bool(sid) and bool(_SID_RE.fullmatch(sid))
+
+
+# ===== v1.28：会话过期与回收 =====
+# 背景：PHP 侧 session GC 是运行时自动做的（按 session.gc_maxlifetime 概率触发），
+# Python 接管 sess_ 文件后没有接手这个职责 —— 只有 logout 主动 session_remove，
+# 从不登出的会话会永久留在 SESSION_SAVE_PATH 里。既占地方，也让「旧 sid 长期有效」
+# 的暴露面一直存在。
+
+def session_age(path) -> float:
+    """会话文件的年龄（秒）；stat 失败返回 -1。"""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return -1.0
+    return max(0.0, time.time() - st.st_mtime)
+
+
+def session_is_expired(path, ttl: int | None = None) -> bool:
+    """该会话文件是否已超龄（默认用 config.SESSION_TTL）。
+
+    stat 失败（文件已不存在）不算过期 —— 由调用方按「不存在」处理，
+    避免把竞态下的删除算成一次「过期」而污染统计。
+    """
+    age = session_age(path)
+    if age < 0:
+        return False
+    limit = int(config.SESSION_TTL if ttl is None else ttl)
+    return age > limit
+
+
+def session_gc(ttl: int | None = None) -> dict:
+    """清理超龄会话文件，返回 {"scanned","removed","kept","errors"}。
+
+    只处理 `sess_` 前缀的普通文件；符号链接与非法 sid 一律跳过（不跟随链接，
+    与 `_is_symlink` 的安全口径一致）。任何单个文件的 OSError 都只计入 errors，
+    不中断整轮 GC —— 会话目录里混进奇怪文件不该让巡检整体失败。
+    """
+    limit = int(config.SESSION_TTL if ttl is None else ttl)
+    out = {"scanned": 0, "removed": 0, "kept": 0, "errors": 0, "ttl": limit}
+    try:
+        entries = list(os.scandir(SESSION_SAVE_PATH))
+    except OSError:
+        return out
+    for ent in entries:
+        name = ent.name
+        if not name.startswith("sess_"):
+            continue
+        sid = name[5:]
+        if not sid or not _SID_RE.fullmatch(sid):
+            continue
+        out["scanned"] += 1
+        try:
+            if ent.is_symlink() or not ent.is_file(follow_symlinks=False):
+                continue
+            st = ent.stat(follow_symlinks=False)
+            if time.time() - st.st_mtime <= limit:
+                out["kept"] += 1
+                continue
+            os.unlink(ent.path)
+            out["removed"] += 1
+        except OSError:
+            out["errors"] += 1
+    return out

@@ -1005,6 +1005,7 @@ function refreshLog() {
     fillLogFiles(d.files || [], d.file);
     var box = document.getElementById('logBox');
     var countEl = document.getElementById('logCount');
+    renderLogSummary(d.summary);
     if (typeof d.lines === 'string') {
       if (box) box.innerHTML = '<div style="color:var(--muted);">' + escapeHtml(d.lines) + '</div>';
       if (countEl) countEl.textContent = '';
@@ -1021,6 +1022,51 @@ function refreshLog() {
     }
     if (countEl) countEl.textContent = '命中 ' + d.total + ' 条';
   }).catch(function() {});
+}
+/* ===== v1.28：日志错误聚合条 ===== */
+function _sumBucketClick(key) {
+  var el = document.getElementById('logKeyword');
+  if (!el) return;
+  // 填的是日志里真实出现的关键词（服务端下发的 kw），不是显示名 ——
+  // 首版填显示名「截图 / 识别失败」，日志里没有这个字面串，命中 0 条。
+  var kw = (window._logSumKw && window._logSumKw[key]) || '';
+  if (!kw) return;
+  el.value = kw;
+  refreshLog();
+}
+function fmtClock(ts) {
+  try {
+    var d = new Date(ts * 1000);
+    var p = function(n) { return (n < 10 ? '0' : '') + n; };
+    return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  } catch (e) { return ''; }
+}
+function renderLogSummary(s) {
+  var wrap = document.getElementById('logSummary');
+  if (!wrap) return;
+  if (!s || !s.total || !s.errors) {
+    wrap.style.display = 'none';
+    wrap.innerHTML = '';
+    return;
+  }
+  window._logSumKw = {};
+  var parts = (s.buckets || []).map(function(b) {
+    var label = escapeHtml(b.label) + ' <b>' + b.count + '</b>';
+    if (!b.kw) {
+      // 没有可匹配关键词的类别（如「其他错误」）→ 只展示，不可点
+      return '<span class="ls-chip ls-plain">' + label + '</span>';
+    }
+    window._logSumKw[b.key] = b.kw;
+    return '<button type="button" class="ls-chip" title="按「' + escapeHtml(b.kw) + '」过滤"'
+      + ' onclick="_sumBucketClick(\'' + b.key + '\')">' + label + '</button>';
+  });
+  var span = '';
+  if (s.first_ts && s.last_ts) {
+    span = '<span class="ls-span">' + fmtClock(s.first_ts) + ' → ' + fmtClock(s.last_ts) + '</span>';
+  }
+  wrap.innerHTML = '<span class="ls-head">错误 <b>' + s.errors + '</b> / ' + s.total + ' 行（' + s.rate + '%）</span>'
+    + parts.join('') + span;
+  wrap.style.display = 'flex';
 }
 /* ===== v1.17：日志工具 / 回到顶部 / 中央快捷键 ===== */
 function logJumpBottom() {

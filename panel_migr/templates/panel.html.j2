@@ -277,6 +277,18 @@
           <span class="badge" id="alertBadge" style="background:var(--primary-soft);color:var(--primary);">{{ ('已启用' if ( not empty(alertVals['alert_enable'])  and  alertVals['alert_enable'] == '1') else '未启用') }}</span>
           <span class="badge" id="alertUpBadge" title="{{ _up.get('url') or '' }}" style="background:#fff4d6;color:#8a6d1f;{{ '' if _up.get('has_update') else 'display:none;' }}">本体有新版本{{ (' v' ~ _up.get('latest')) if _up.get('latest') else '' }}</span>
         </h2>
+        {# v1.28：推送通道健康看板 —— 告警通道失效时它自己不会告警，所以摊到页面上 #}
+        {% set _ah = alertHealth | default({}, true) %}
+        {% if _ah.get('enabled') %}
+        <div class="ahbar ah-{{ _ah.get('color', 'gray') }}" id="alertHealthBar">
+          <span class="ah-dot"></span>
+          <span class="ah-label">{{ _ah.get('label', '') }}</span>
+          <span class="ah-detail">{{ _ah.get('detail', '') }}</span>
+          {% if _ah.get('level') in ('warn', 'crit', 'setup') %}
+          <button type="button" class="ah-act" onclick="_atestAlert('warn')">发送测试告警</button>
+          {% endif %}
+        </div>
+        {% endif %}
         <div class="cfg-row">
           <div class="cfg-label">启用告警<span class="cfg-tip">容器意外停止 / 任务中断时自动推送手机</span></div>
           <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;"><input type="checkbox" id="alertEnable" style="width:18px;height:18px;"{{ (' checked' if ( not empty(alertVals['alert_enable'])  and  alertVals['alert_enable'] == '1') else '') }}> 开启</label>
@@ -810,6 +822,8 @@
           <button class="btn small primary" id="exportLogBtn"><svg class="bi"><use href="/static/icons.svg#i-export"></use></svg>导出</button>
           <button class="btn small gray" onclick="resetLogFilter()">↻ 重置</button>
         </div>
+        {# v1.28：错误聚合条 —— 一眼看出这批日志里哪类错误占大头、有没有在刷 #}
+        <div class="log-summary" id="logSummary" style="display:none;"></div>
         <div class="log-count" id="logCount" style="margin-bottom:8px;"></div>
         <div class="log-tools">
           <label><input type="checkbox" id="logFollow" checked> 自动跟随</label>

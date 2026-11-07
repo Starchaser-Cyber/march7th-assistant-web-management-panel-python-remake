@@ -83,6 +83,11 @@ _ALERT_DEFAULT = {
     # v1.27：错误循环预警（本体日志重复错误检测）
     "loop_last_check": 0,       # 上次错误循环检查时间（epoch 秒）
     "loop_last_count": 0,       # 上次检查命中重复错误的行数
+    # v1.28：推送通道健康看板（最近一次推送尝试的结果，供 alert_health 展示）
+    "push_last_ok_at": 0,       # 上次推送成功的 epoch 秒
+    "push_last_fail_at": 0,     # 上次推送失败的 epoch 秒
+    "push_last_fail_msg": "",   # 上次推送失败的说明（如「Bark 返回 HTTP 400」）
+    "push_last_fail_kind": "",  # 上次推送失败所属告警类型（error_loop / aborted / down…）
 }
 
 # 告警分级（顺序即展示/推送优先级）
@@ -97,6 +102,8 @@ _CHANNELS = ("bark", "serverchan", "webhook", "wecom")
 _STR_FIELDS = (
     "disk_level", "disk_path", "morning_last",
     "upstream_local", "upstream_latest", "upstream_notified", "upstream_error",
+    # v1.28：健康看板
+    "push_last_fail_msg", "push_last_fail_kind",
 )
 
 
@@ -142,7 +149,9 @@ def alert_state_load(inst: dict) -> dict:
     if not isinstance(s.get("last_push_kind_at"), dict):
         s["last_push_kind_at"] = {}
     for k in ("retry_at", "retry_count", "push_fail_streak", "push_backoff_until",
-              "disk_last_check", "upstream_last_check"):
+              "disk_last_check", "upstream_last_check",
+              "loop_last_check", "loop_last_count",
+              "push_last_ok_at", "push_last_fail_at"):
         try:
             s[k] = int(s.get(k) or 0)
         except (TypeError, ValueError):
@@ -448,10 +457,16 @@ def _push_events(inst: dict, s: dict, events_out: list, now: int,
             for kind, _, _, _ in grp:
                 lpk[kind] = ts
             s["push_fail_streak"] = 0
+            # v1.28：健康看板 —— 记录最近一次成功推送
+            s["push_last_ok_at"] = ts
             for kind, title, body, _ in grp:
                 _publish_alert(inst, kind, title, body, True, 0,
                                str(r.get("msg") or "已推送"), sev)
         else:
+            # v1.28：健康看板 —— 记录最近一次失败原因（整包推送成功才清空）
+            s["push_last_fail_at"] = int(now)
+            s["push_last_fail_msg"] = str(r.get("msg") or "推送失败")
+            s["push_last_fail_kind"] = str(grp[0][0] or "")
             _enqueue_pending(inst, s, grp, now, str(r.get("msg") or ""))
     s["last_push_kind_at"] = lpk
     return pushed_any
@@ -503,6 +518,7 @@ def _retry_succeeded(inst: dict, s: dict, pend: list, now: int) -> None:
     s["retry_count"] = 0
     s["retry_at"] = 0
     s["push_fail_streak"] = 0
+    s["push_last_ok_at"] = now           # v1.28：重试成功也算通道恢复
     for p in pend:
         _publish_alert(inst, str(p.get("kind") or ""), str(p.get("title") or ""),
                        str(p.get("body") or ""), True, rc, "重试成功",
@@ -527,6 +543,8 @@ def _retry_failed(inst: dict, s: dict, pend: list, now: int) -> None:
     rc = int(s.get("retry_count") or 0) + 1
     s["retry_count"] = rc
     s["push_fail_streak"] = int(s.get("push_fail_streak") or 0) + 1
+    # v1.28：健康看板 —— 重试失败也更新最近失败时间
+    s["push_last_fail_at"] = int(now)
     delays = list(cfg.ALERT_RETRY_DELAYS)
     if rc >= int(cfg.ALERT_MAX_RETRY) or rc >= len(delays):
         _retry_exhausted(inst, s, pend, rc)
@@ -1289,6 +1307,125 @@ def loop_patrol(inst: dict, force: bool = False) -> dict:
                 alerted = bool(pushed)
         alert_state_save(inst, s)
         return {"ok": True, "enabled": True, "count": cnt, "alerted": alerted}
+
+
+# ===== 推送通道健康看板（v1.28）=====
+
+def alert_health(inst: dict) -> dict:
+    """汇总告警通道的健康状态，供配置页顶部健康条展示。
+
+    这个函数存在的理由：告警系统失效时**它自己是不会告警的**。线上曾经发生过
+    `push_fail_streak=8`、`last_push_kind_at={}`（一次都没成功过）、Bark 一直回
+    HTTP 400 却无人知晓的情况——用户以为「没收到告警就是没事」，实际是推送根本
+    没发出去。把状态摊到页面上，让「通道坏了」变成一眼可见。
+
+    返回：
+      level: ok / warn / crit / off / setup
+        - off   告警未启用
+        - setup 已启用但没填接收地址（配了也没用）
+        - crit  连续失败达到冷静期阈值，或最近一次推送失败且从未成功过
+        - warn  最近一次是失败 / 还在重试队列里
+        - ok    最近一次成功
+      label / color / detail / last_ok / last_fail / streak / pending / channel
+    """
+    c = panel_config()
+    enabled = str(c.get("alert_enable") or "") == "1"
+    target = str(c.get("alert_target") or "").strip()
+    ch = str(c.get("alert_channel") or "bark").strip() or "bark"
+    if ch not in _CHANNELS:
+        ch = "bark"
+    out = {
+        "enabled": enabled,
+        "channel": ch,
+        "channel_label": _CHANNEL_LABEL.get(ch, ch),
+        "has_target": bool(target),
+        "last_ok": 0, "last_fail": 0, "fail_msg": "", "fail_kind": "",
+        "streak": 0, "pending": 0, "retry_count": 0, "backoff_until": 0,
+        "level": "off", "label": "告警未启用", "color": "gray", "detail": "",
+    }
+    if not enabled:
+        out["detail"] = "勾选「启用告警」后才会评估通道健康"
+        return out
+    if not target:
+        out["level"] = "setup"
+        out["label"] = "未配置接收地址"
+        out["color"] = "orange"
+        out["detail"] = f"通道是「{out['channel_label']}」，但接收地址为空，推送不会发出"
+        return out
+
+    s = alert_state_load(inst)
+    last_ok = int(s.get("push_last_ok_at") or 0)
+    last_fail = int(s.get("push_last_fail_at") or 0)
+    streak = int(s.get("push_fail_streak") or 0)
+    ppend = s.get("pending") or []
+    out.update({
+        "last_ok": last_ok,
+        "last_fail": last_fail,
+        "fail_msg": str(s.get("push_last_fail_msg") or ""),
+        "fail_kind": str(s.get("push_last_fail_kind") or ""),
+        "streak": streak,
+        "pending": len(ppend) if isinstance(ppend, list) else 0,
+        "retry_count": int(s.get("retry_count") or 0),
+        "backoff_until": int(s.get("push_backoff_until") or 0),
+    })
+
+    backoff = int(s.get("push_backoff_until") or 0)
+    if backoff > int(time.time()):
+        out["level"] = "crit"
+        out["label"] = "通道已停推"
+        out["color"] = "red"
+        out["detail"] = (f"连续失败 {streak} 次，进入冷静期，"
+                         f"{int((backoff - time.time()) // 60)} 分钟内不再尝试推送")
+        return out
+    if last_fail > last_ok:
+        # 最近一次是失败
+        if last_ok <= 0:
+            out["level"] = "crit"
+            out["label"] = "从未推送成功"
+            out["color"] = "red"
+            out["detail"] = (f"通道「{out['channel_label']}」一次都没成功过——"
+                             f"最近失败原因：{out['fail_msg'] or '未知'}。"
+                             "请检查接收地址/密钥是否正确")
+        elif streak >= int(cfg.ALERT_BACKOFF_STREAK):
+            out["level"] = "crit"
+            out["label"] = "推送持续失败"
+            out["color"] = "red"
+            out["detail"] = (f"连续失败 {streak} 次，最近原因：{out['fail_msg'] or '未知'}")
+        else:
+            out["level"] = "warn"
+            out["label"] = "最近推送失败"
+            out["color"] = "orange"
+            detail = f"最近一次推送失败：{out['fail_msg'] or '未知'}"
+            if out["pending"]:
+                detail += f"；{out['pending']} 条告警在重试队列中"
+            out["detail"] = detail
+        return out
+    if last_ok > 0:
+        out["level"] = "ok"
+        out["label"] = "通道正常"
+        out["color"] = "green"
+        out["detail"] = "最近一次推送成功 · " + _fmt_ts(last_ok)
+        return out
+    out["level"] = "warn"
+    out["label"] = "尚未推送过"
+    out["color"] = "orange"
+    out["detail"] = "配置已就绪但还没有触发过推送，可点「发送测试告警」验证通道"
+    return out
+
+
+_CHANNEL_LABEL = {
+    "bark": "Bark",
+    "serverchan": "Server酱",
+    "webhook": "Webhook",
+    "wecom": "企业微信",
+}
+
+
+def _fmt_ts(ts: int) -> str:
+    try:
+        return time.strftime("%m-%d %H:%M", time.localtime(int(ts)))
+    except (ValueError, OSError):
+        return "—"
 
 
 # ===== 巡检心跳 =====

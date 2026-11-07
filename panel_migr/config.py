@@ -24,7 +24,7 @@ HISTORY_KEEP = 200               # 历史最多保留条数
 SCHEDULE_WINDOW_SECONDS = 1800   # 计划任务补跑窗口（M2+）
 
 # ===== 面板自身更新（与 index.php define() 对齐，M4 可用环境变量覆盖）=====
-PANEL_VERSION = os.environ.get("M7A_PANEL_VERSION", "1.27.0")
+PANEL_VERSION = os.environ.get("M7A_PANEL_VERSION", "1.28.0")
 UPDATE_ENABLED = True
 UPDATE_TYPE = "github"           # gitea / github
 _UPDATE_HOST_RAW = os.environ.get("M7A_UPDATE_HOST", "https://github.com").strip().rstrip("/")
@@ -68,6 +68,15 @@ try:
     SESSION_FILE_MODE = int(os.environ.get("M7A_SESSION_MODE", "660"), 8) & 0o777
 except ValueError:
     SESSION_FILE_MODE = 0o660
+
+# v1.28：会话过期（秒）。PHP 侧运行时自带 session GC，Python 接管 sess_ 文件后
+# 一直没有回收职责 —— 只靠用户主动 logout 才删，不登出的会话会永久堆积。
+# 默认 30 天：既避免「忘登出就一直有效」的长期风险，也远长于正常使用习惯。
+try:
+    SESSION_TTL = max(3600, int(os.environ.get("M7A_SESSION_TTL", str(30 * 86400))))
+except ValueError:
+    SESSION_TTL = 30 * 86400
+SESSION_GC_IV = 3600                 # GC 执行间隔（秒），挂在 sampler 的小时节流位上
 
 # ===== M6 后端整合（Python 唯一后端）=====
 # v1.22 起 Python 为唯一后端：未匹配的页面/GET 由 Python 本地渲染，不再转发回旧站点。

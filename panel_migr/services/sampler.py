@@ -47,6 +47,12 @@ def health_once(inst: dict) -> dict:
     return health_tick(inst)
 
 
+def _session_gc() -> dict:
+    """v1.28：会话文件回收。phpsess 在 panel_migr 根，不在 services 包内。"""
+    import phpsess
+    return phpsess.session_gc()
+
+
 async def runner() -> None:
     """1 秒 tick：采样（节流在 monitor_sample 内）/ 日志流 1.5s / 告警 60s / 裁剪 1h。"""
     from services.instances import instance_current
@@ -98,6 +104,11 @@ async def runner() -> None:
                     await anyio.to_thread.run_sync(eventdb.trim)
                 except Exception:
                     log.exception("eventdb trim failed")
+                # v1.28：会话 GC（1 小时一次，与 eventdb.trim 共用节流位）
+                try:
+                    await anyio.to_thread.run_sync(_session_gc)
+                except Exception:
+                    log.exception("session gc failed")
         except asyncio.CancelledError:
             raise
         except Exception:
