@@ -66,6 +66,8 @@ def h_log(request):
         "keyword": str(qp.get("keyword") or ""),
         "level": str(qp.get("level") or ""),
         "hours": _to_int(qp.get("hours"), 0),
+        # v1.28.1（V28-04）：聚合条 chip 下钻按错误类别全量过滤
+        "category": str(qp.get("category") or ""),
         "lines": max(100, min(5000, _to_int(qp.get("lines"), 2000))),
     }
     if path:

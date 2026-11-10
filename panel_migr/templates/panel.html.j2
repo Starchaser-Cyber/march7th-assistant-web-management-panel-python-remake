@@ -805,14 +805,14 @@
         </div>
         <div class="log-filter">
           <input type="text" id="logKeyword" placeholder="搜索关键词（回车立即过滤）" onkeyup="logKeywordKeyup(event)">
-          <select id="logLevel" onchange="refreshLog()">
+          <select id="logLevel" onchange="_sumCatClear(); refreshLog()">
             <option value="">全部级别</option>
             <option value="DEBUG">DEBUG</option>
             <option value="INFO">INFO</option>
             <option value="WARNING">WARNING</option>
             <option value="ERROR">ERROR</option>
           </select>
-          <select id="logHours" onchange="refreshLog()">
+          <select id="logHours" onchange="_sumCatClear(); refreshLog()">
             <option value="0">全部时间</option>
             <option value="1">最近 1 小时</option>
             <option value="6">最近 6 小时</option>

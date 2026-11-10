@@ -59,8 +59,10 @@ jobs:
           python -m pip install --upgrade pip
           # 用 lock 文件：审计要求「实测通过的确切版本」，避免上游小版本漂移把 CI 弄红
           pip install -r panel_migr/requirements.lock
-          # pyyaml 只在测试里用（P0-1 回归要用 yaml.safe_load 校验 config.yaml 合法性）
-          pip install "pytest>=8" "pyyaml>=6"
+          # v1.28.1（V28-02）：测试依赖单独锁定。此前只装 pytest + pyyaml，
+          # 漏了 pytest-asyncio —— 两个测试文件用了 @pytest.mark.asyncio，
+          # --strict-markers 会在收集阶段直接报 2 errors，一项测试都跑不了。
+          pip install -r panel_migr/requirements-dev.lock
 
       - name: 运行测试
         # M7A_EVENTS_BG=0：关掉事件采样后台线程（测试里不需要，还会拖慢并引入抖动）

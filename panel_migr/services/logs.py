@@ -112,6 +112,11 @@ def filter_log(path: str, opts: dict) -> dict:
     level = str(opts.get("level") or "").strip().upper()
     hours = int(opts.get("hours", 0) or 0)
     cutoff = time.time() - hours * 3600 if hours > 0 else None
+    # v1.28.1（V28-04）：错误类别过滤。chip 下钻传 category=<key>，
+    # 按该类别的**完整 needles** 过滤（见 category_matches），与聚合条口径一致。
+    category = str(opts.get("category") or "").strip()
+    if category and category not in _ERROR_CATEGORY_KEYS:
+        category = ""
 
     level_re = None
     if level and level != "ALL":
@@ -120,6 +125,8 @@ def filter_log(path: str, opts: dict) -> dict:
     out = []
     for line in raw:
         if kw and kw.lower() not in line.lower():
+            continue
+        if category and not category_matches(line, category):
             continue
         if level_re is not None and not level_re.search(line):
             continue
@@ -141,17 +148,31 @@ _ERROR_LEVEL_RE = re.compile(r"\|\s*(ERROR|CRITICAL|FATAL)\s*\|", re.I)
 # 分类规则（有序，先命中先归类）。key 是稳定标识，label 给人看，
 # kw 是「点这个分类要往关键词框里填什么」—— 必须是日志里真实出现的串，
 # 否则填进去命中 0 条（v1.28 首版就踩了这个坑：填显示名「截图 / 识别失败」）。
+#
+# v1.28.1（V28-09）：`ui` 规则提到 `screenshot` 之前。此前 `screenshot` 排第一且含
+# 宽泛的「识别」，把 V1.28 专门新增的界面识别失败类整类吞掉 —— 实测
+# 「界面识别失败，未找到目标」归到 screenshot，`ui` 只对不含「识别」二字的行生效。
+# 同时把 `screenshot` 的「识别」收窄为「识别失败 / OCR 识别 / 图像识别」，
+# 避免它继续抢占别的类别。
+# 合法类别 key 白名单（filter_log 在模块上方即用，故只依赖这份静态集合）
+_ERROR_CATEGORY_KEYS = frozenset((
+    "ui", "screenshot", "timeout", "network", "session",
+    "browser", "config", "task", "other",
+))
+
 _ERROR_RULES: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
-    ("screenshot", "截图 / 识别失败", "截图", ("截图", "识别", "ocr", "OCR")),
+    ("ui", "界面识别失败", "未识别", ("未识别", "界面识别", "识别失败", "找不到界面", "当前界面")),
+    ("screenshot", "截图 / 识别失败", "截图", ("截图", "OCR 识别", "图像识别", "ocr", "OCR")),
     ("timeout", "超时", "超时", ("超时", "timed out", "timeout")),
     ("network", "网络 / 端口", "端口", ("端口", "连接", "Errno", "Connection", "websocket", "HTTP")),
     ("session", "登录 / 会话", "登录", ("登录", "会话", "session", "cookie")),
-    ("ui", "界面识别失败", "界面", ("界面", "未识别", "找不到")),
     ("browser", "浏览器 / 驱动", "浏览器", ("chrome", "Chrome", "浏览器", "webdriver", "session id")),
     ("config", "配置 / 文件", "配置", ("配置", "yaml", "config", "文件", "路径")),
     ("task", "任务 / 流程失败", "失败", ("失败", "异常")),
 )
 _ERROR_OTHER = ("other", "其他错误", "")
+_RULES_BY_KEY = {k: (lb, needles) for k, lb, _kw, needles in _ERROR_RULES}
+_RULES_BY_KEY[_ERROR_OTHER[0]] = (_ERROR_OTHER[1], ())
 
 
 def classify_error(line: str) -> str:
@@ -161,6 +182,16 @@ def classify_error(line: str) -> str:
             if nd in line:
                 return key
     return _ERROR_OTHER[0]
+
+
+def category_matches(line: str, category: str) -> bool:
+    """该行是否属于某错误类别（v1.28.1 / V28-04：chip 下钻用完整 needles 过滤）。
+
+    与 `classify_error()` 同源同规则：先归类再比对 key，因此「chip 标注 N 条」
+    与「点进去看到的行数」必然一致 —— 这是修复点：旧实现下钻只填该类的**单个**
+    关键词，而每类实际有 2~6 个 needles，必然漏行（实测 5 条 → 1 条）。
+    """
+    return classify_error(line) == category
 
 
 def error_summary(lines: list[str]) -> dict:

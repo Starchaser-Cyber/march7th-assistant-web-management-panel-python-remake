@@ -111,6 +111,8 @@ def h_export_log(request) -> Response:
         "keyword": str(request.query_params.get("keyword") or ""),
         "level": str(request.query_params.get("level") or ""),
         "hours": max(0, _to_int(request.query_params.get("hours"), 0)),
+        # v1.28.1：导出跟随当前的错误类别下钻，与页面看到的行一致
+        "category": str(request.query_params.get("category") or ""),
         "lines": 5000,
     }
     r = filter_log(path, opts)

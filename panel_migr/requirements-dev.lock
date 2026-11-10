@@ -1,0 +1,19 @@
+# m7a_panel 开发/测试依赖锁定（v1.28.1 新增）
+#
+# 为什么单独有这个文件（V28-02）：审计按 `ci.yml` + `requirements.lock` +
+# `pyproject.toml` 规范新建环境时，pytest 在**收集阶段**就 2 errors ——
+# `test_v1247_cov_gateway.py` / `test_v1247_cov_main.py` 用了
+# `@pytest.mark.asyncio`，而四个依赖声明文件里没有任何一处声明
+# `pytest-asyncio`；`pyproject.toml` 的 `--strict-markers` 直接拒绝未注册
+# 的 marker。开发者本地装了该插件，但没写进交付，于是「能跑全靠运气」。
+#
+# 用法：
+#   pip install -r requirements.lock -r requirements-dev.lock
+#   cd panel_migr && python -m pytest tests -q
+#
+# 版本为 2026-11-11 实测通过组合（Python 3.11/3.12 均可）。
+pytest==9.2.0
+pytest-asyncio==1.4.1.post1
+pytest-cov==7.0.0
+pyyaml==6.0.3
+ruff==0.14.4

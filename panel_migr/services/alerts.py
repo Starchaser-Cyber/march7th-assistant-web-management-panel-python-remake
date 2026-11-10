@@ -459,12 +459,14 @@ def _push_events(inst: dict, s: dict, events_out: list, now: int,
             s["push_fail_streak"] = 0
             # v1.28：健康看板 —— 记录最近一次成功推送
             s["push_last_ok_at"] = ts
+            s["push_last_ok_ms"] = int(time.time() * 1000)   # v1.28.1 同秒排序依据
             for kind, title, body, _ in grp:
                 _publish_alert(inst, kind, title, body, True, 0,
                                str(r.get("msg") or "已推送"), sev)
         else:
             # v1.28：健康看板 —— 记录最近一次失败原因（整包推送成功才清空）
             s["push_last_fail_at"] = int(now)
+            s["push_last_fail_ms"] = int(time.time() * 1000)  # v1.28.1 同秒排序依据
             s["push_last_fail_msg"] = str(r.get("msg") or "推送失败")
             s["push_last_fail_kind"] = str(grp[0][0] or "")
             _enqueue_pending(inst, s, grp, now, str(r.get("msg") or ""))
@@ -488,12 +490,21 @@ def _pending_kinds(pend: list) -> set:
     return {str(p.get("kind") or "") for p in pend}
 
 
-def _retry_push(pend: list, groups: dict) -> bool:
-    """按 severity 各发一条合并推送；全部通道成功返回 True。
+def _retry_push(pend: list, groups: dict) -> tuple:
+    """按 severity 各发一条合并推送；返回 `(ok_all, fail_msg, fail_kind)`。
+
+    v1.28.1（V28-05）：此前只返回 `bool`，把 `alert_send()` 的 `r["msg"]`
+    和 `r["kind"]` 丢掉了 —— 于是 `_retry_failed()` 只能刷新失败**时间**、
+    没法刷新失败**原因**，健康看板会一直显示几小时前那次的原因（实测：
+    初次失败「Bark 返回 HTTP 400」，之后重试失败原因完全不同，看板却仍显示
+    前者，而 `push_last_fail_kind` 变成 None）。
 
     同一 severity 的多条 pending 合并成一条正文（`\n\n` 分隔），避免刷屏。
+    失败原因取**最后一次**失败的通道返回，与「最近一次失败」的语义一致。
     """
     ok_all = True
+    fail_msg = ""
+    fail_kind = ""
     for sev in _SEVERITIES:
         grp = groups.get(sev) or []
         if not grp:
@@ -503,7 +514,9 @@ def _retry_push(pend: list, groups: dict) -> bool:
                        severity=sev)
         if not r.get("ok"):
             ok_all = False
-    return ok_all
+            fail_msg = str(r.get("msg") or "")
+            fail_kind = str(r.get("kind") or "")
+    return ok_all, fail_msg, fail_kind
 
 
 def _retry_succeeded(inst: dict, s: dict, pend: list, now: int) -> None:
@@ -519,6 +532,7 @@ def _retry_succeeded(inst: dict, s: dict, pend: list, now: int) -> None:
     s["retry_at"] = 0
     s["push_fail_streak"] = 0
     s["push_last_ok_at"] = now           # v1.28：重试成功也算通道恢复
+    s["push_last_ok_ms"] = int(time.time() * 1000)
     for p in pend:
         _publish_alert(inst, str(p.get("kind") or ""), str(p.get("title") or ""),
                        str(p.get("body") or ""), True, rc, "重试成功",
@@ -538,13 +552,22 @@ def _retry_exhausted(inst: dict, s: dict, pend: list, rc: int) -> None:
                        str(p.get("severity") or "warn"))
 
 
-def _retry_failed(inst: dict, s: dict, pend: list, now: int) -> None:
-    """重试失败：累加计数，按 30/60/120 节奏排下一次；用尽则转 _retry_exhausted。"""
+def _retry_failed(inst: dict, s: dict, pend: list, now: int,
+                  fail_msg: str = "", fail_kind: str = "") -> None:
+    """重试失败：累加计数，按 30/60/120 节奏排下一次；用尽则转 _retry_exhausted。
+
+    v1.28.1（V28-05）：一并回填失败**原因/类型**（不只时间），否则健康看板
+    展示的「最近失败原因」会停留在很久以前那次。
+    """
     rc = int(s.get("retry_count") or 0) + 1
     s["retry_count"] = rc
     s["push_fail_streak"] = int(s.get("push_fail_streak") or 0) + 1
     # v1.28：健康看板 —— 重试失败也更新最近失败时间
     s["push_last_fail_at"] = int(now)
+    s["push_last_fail_ms"] = int(time.time() * 1000)
+    if fail_msg:
+        s["push_last_fail_msg"] = fail_msg
+        s["push_last_fail_kind"] = fail_kind
     delays = list(cfg.ALERT_RETRY_DELAYS)
     if rc >= int(cfg.ALERT_MAX_RETRY) or rc >= len(delays):
         _retry_exhausted(inst, s, pend, rc)
@@ -590,10 +613,11 @@ def _process_pending(inst: dict, s: dict, now: int) -> set:
 
     # Q-08：本批实际会发出推送的 kind 集合（无论成败都算占用通道）
     sent_kinds = _pending_kinds(pend)
-    if _retry_push(pend, _pending_by_severity(pend)):
+    ok_push, fail_msg, fail_kind = _retry_push(pend, _pending_by_severity(pend))
+    if ok_push:
         _retry_succeeded(inst, s, pend, now)
     else:
-        _retry_failed(inst, s, pend, now)
+        _retry_failed(inst, s, pend, now, fail_msg, fail_kind)
     return sent_kinds
 
 
@@ -1361,6 +1385,9 @@ def alert_health(inst: dict) -> dict:
     out.update({
         "last_ok": last_ok,
         "last_fail": last_fail,
+        # 毫秒级时间戳：同秒内的先后顺序靠它区分（旧字段保持兼容）
+        "last_ok_ms": int(s.get("push_last_ok_ms") or 0),
+        "last_fail_ms": int(s.get("push_last_fail_ms") or 0),
         "fail_msg": str(s.get("push_last_fail_msg") or ""),
         "fail_kind": str(s.get("push_last_fail_kind") or ""),
         "streak": streak,
@@ -1377,7 +1404,11 @@ def alert_health(inst: dict) -> dict:
         out["detail"] = (f"连续失败 {streak} 次，进入冷静期，"
                          f"{int((backoff - time.time()) // 60)} 分钟内不再尝试推送")
         return out
-    if last_fail > last_ok:
+    # v1.28.1（V28-05）：`last_ok` / `last_fail` 是**整数秒**，同一秒内先成功后
+    # 失败时二者相等，`last_fail > last_ok` 不成立 → 会落到「通道正常」分支，
+    # 把刚发生的失败吞掉。改为 `>=` 且要求 last_fail 非零：同时刻以失败为准
+    # （更保守，宁可提示也不要漏报）。
+    if last_fail > 0 and last_fail >= last_ok:
         # 最近一次是失败
         if last_ok <= 0:
             out["level"] = "crit"

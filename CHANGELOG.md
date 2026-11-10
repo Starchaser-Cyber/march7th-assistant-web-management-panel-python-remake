@@ -1,5 +1,52 @@
 # Changelog
 
+## V1.28.1（2026-11-11）
+
+**一句话总结**：不是新功能，而是把 2026-11-10 第三方全方位审计的 9 条缺陷逐条修掉 —— 其中两条是真 bug（活跃会话被 TTL 回收、日志聚合条点进去条数对不上），两条是安全（python-multipart 六个 PYSEC），其余是「交出去跑不起来 / 数据不可复现」的工程债。
+
+### 1. 活跃会话被 TTL 静默回收（V28-01，P1）
+
+**现场**：审计用真实 `load_session()` 连发 9 次普通请求，会话文件 mtime 一次都没动。`session_gc(ttl=3600)` 到点就把**正在使用**的会话删了 —— 用户白天一直在点，晚上回来被踢下线。
+
+- `phpsess.py` 新增 `_touch_session(path, session)`，`load_session()` 读成功后调用：先 `os.lstat`，`stat.S_ISLNK` 或非 `S_ISREG` **直接返回**（不跟随符号链接，保持 V1.24.x 的 P1-12 口径），再 `os.utime(path, None)` 把 mtime 推到当前；`OSError` 只 `log.debug`，绝不因为续期失败把正常请求打成 500。
+- TTL 语义变成「**距最后一次读取**」而不是「距最后一次写盘」。
+
+### 2. 日志错误聚合条点进去条数对不上（V28-04 + V28-09，P2/P3）
+
+**现场**：聚合条标「网络 5 条」，点一下只剩 1 条 —— 因为 chip 只把类别里的**第一个关键词**填进搜索框（`kw="端口"`）。更糟的是分类规则顺序：`screenshot` 规则的关键词含 `识别`，而 `ui` 规则排在它后面，于是「界面识别失败」被算进截图类；回归到真实线上日志，专坑 `未识别出任何界面，请确保游戏画面干净，按ESC后重试`（2026-11-10 全天 1850 条）。
+
+- `logs.py`：`ui` 规则提到最前，needles 扩为 `("未识别", "界面识别", "识别失败", "找不到界面", "当前界面")`；`screenshot` 收窄为 `("截图", "OCR 识别", "图像识别", "ocr", "OCR")`。
+- 新增 `category_matches(line, category)` 与 `filter_log(opts["category"])`：下钻改为**按类别过滤**而不是按关键词，`count(category) == 聚合条标注数` 恒成立（拿全部 9 个类别做了逐个比对测试）。
+- 前端：`_sumBucketClick` 同时写 `window._logSumCat` 与关键词框，`logFilterParams()` 带 `&category=`；改关键词、切级别、切时间窗、重置、按回车都会 `_sumCatClear()` 清掉类别，不会出现「搜索框写 A、结果却是 B」的错位。
+
+### 3. 交付依赖装不全，CI 收集阶段就红（V28-02 + V28-03 + V28-08，P1/P2/P3）
+
+**现场**：按 `ci.yml` + `requirements.lock` + `pyproject.toml` 规范新建环境，pytest **收集阶段** 2 errors —— 有 2 个测试模块用了 `@pytest.mark.asyncio`，但四个依赖声明文件里没有任何一处写 `pytest-asyncio`，`--strict-markers` 直接拒绝。开发者本地碰巧装了，所以一直没发现。
+
+- `pyproject.toml` dev 依赖补 `pytest-asyncio>=0.23`；新建 `panel_migr/requirements-dev.lock` 锁定 pytest 9.2.0 / pytest-asyncio 1.4.1.post1 / pytest-cov 7.0.0 / pyyaml 6.0.3 / ruff 0.14.4，`ci.yml` 改用这个文件。
+- `python-multipart` 0.0.21 → **0.0.33**：0.0.21 命中 6 个 2026 年 PYSEC，其中 PYSEC-2026-3037（参数走私）在本项目**未登录即可利用**（`handle_post` 先 `await request.form()` 才 `is_auth`）。`requirements.txt` / `requirements.lock` / `pyproject.toml` 三处同步。
+- 版本号：`pyproject.toml` 从 1.24.7 抬到 1.28.1，`requirements.lock` 头注释、`ruff.toml` 头注释的旧版本标注一并校正。
+
+### 4. 告警健康看板说假话（V28-05，P3）
+
+- 失败原因会过期：`_retry_push()` 原来只返回 `bool`，重试失败时**不更新** `push_last_fail_msg/kind`，看板长期显示上一次的旧原因。改为返回 `(ok_all, fail_msg, fail_kind)`，`_retry_failed()` 接收并回填。
+- 同一秒内先成功后失败被判成「通道正常」：判据从 `last_fail > last_ok` 改为 `last_fail > 0 and last_fail >= last_ok` —— 秒级时间戳下，同秒内发生的失败必须按失败侧处理。
+- 时间戳旁补写 `push_last_ok_ms` / `push_last_fail_ms`（毫秒精度，只增不改），看板输出 `last_ok_ms` / `last_fail_ms`；秒级字段原样保留，既有数据与测试不受影响。
+
+### 5. 自更新在无重启权限的宿主上整单回滚（V28-07，P3）
+
+CI/非 root 环境里 `systemctl restart m7a-panel` 会报 `Interactive authentication required.`，此前被当成「更新失败」→ 触发整单回滚，明明代码已经换入并校验通过。新增 `_env_restart_blocked(detail)` 识别环境限制（polkit 拒绝、无 systemd、命令缺失），降级为 `skipped=True` + 提示「请以 root 执行 systemctl restart m7a-panel 后生效」；服务真起不来（单元不存在、探测超时）仍照旧判失败。
+
+### 6. 测试不再自我欺骗（V28-06）
+
+`test_m3_preview.py` 里的 `h264_present` 夹具会顺手伪造 `_ENC_CACHE`，于是「本机没装 libx264」这件事被掩盖，ws264 端到端用例在最该暴露问题的机器上是绿的。改为真实探测 `pv.h264_codec()`，无可用编码器就 `pytest.skip` 并说明原因；只有需要构造坏 token 的用例才用 `h264_mock_libx264` 显式伪造。
+
+### 测试
+
+- 全量 **1414 passed / 0 failed / 1 skipped**（V1.28.0 基线 1390 passed / 1 failed(env) / 4 skipped）；新增 `tests/test_v1281_audit_fixes.py` 20 项回归，逐条对应上面 9 个缺陷编号。
+- 唯一 skip 是容器内 TTY 相关环境跳过项，与本版改动无关。
+
+
 ## V1.28.0（2026-11-07）
 
 **一句话总结**：把「看不见的故障」摊到界面上 —— 告警通道自己坏掉时它不会告警，所以给它加一条健康看板；会话文件只增不减，所以加 TTL + 定时回收；日志页只能逐行翻，所以加错误聚合条。

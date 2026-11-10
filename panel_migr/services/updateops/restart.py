@@ -242,6 +242,23 @@ def _detach_restart_and_probe(port: int, retries: int, interval: int,
     }
 
 
+def _env_restart_blocked(detail: str) -> bool:
+    """systemctl restart 的失败是否属于「环境不允许」而非「服务起不来」。
+
+    覆盖：没权限（polkit 交互认证被拒）、无 systemd（容器/精简系统）。
+    """
+    d = (detail or "").lower()
+    for nd in ("interactive authentication required",
+               "access denied",
+               "must be root",
+               "not running systemd",
+               "has not been booted with systemd",
+               "command not found"):
+        if nd in d:
+            return True
+    return False
+
+
 def _restart_and_health_check(port: int = 0, retries: int = 3, interval: int = 2,
                               old: Path | None = None, stage: Path | None = None) -> dict:
     """更新后重启 m7a-panel 并确认本地端口就绪；失败返回失败原因。
@@ -278,8 +295,19 @@ def _restart_and_health_check(port: int = 0, retries: int = 3, interval: int = 2
     # —— 形态二：systemd 托管但本进程不在单元内（测试 / 前台手工）→ 同步重启 + 探测 ——
     r = _rt.run_cmd(f"systemctl restart {_rt._RESTART_UNIT}", timeout=30)
     if r.get("code") != 0:
+        # v1.28.1（审计 V28-07）：非 root / 无 polkit 的宿主上 systemctl restart 会
+        # 直接失败（"Interactive authentication required."）。这属于**环境限制**，
+        # 不是更新失败 —— 代码已经换入并校验通过，不该因此回滚。降级为提示，
+        # 让用户手动重启面板，与「未检测到 systemd 服务」的处理一致。
+        detail = (r.get("out") or "").strip()
+        if _env_restart_blocked(detail):
+            return {
+                "ok": True, "skipped": True, "probe_ok": False,
+                "msg": (f"代码已更新，但当前环境无法重启面板服务（{detail[:120]}），"
+                        "请以 root 执行 systemctl restart m7a-panel 后生效"),
+            }
         return {"ok": False, "skipped": False, "probe_ok": False,
-                "msg": f"systemctl restart 失败：{(r.get('out') or '').strip()}"}
+                "msg": f"systemctl restart 失败：{detail}"}
 
     for i in range(retries):
         _rt.time.sleep(interval)

@@ -979,16 +979,21 @@ function renderLogLine(line, kw) {
   return esc;
 }
 function logKeywordKeyup(e) {
-  if (e.key === 'Enter') { refreshLog(); return; }
+  if (e.key === 'Enter') { _sumCatClear(); refreshLog(); return; }
   clearTimeout(_logKeywordTimer);
-  _logKeywordTimer = setTimeout(refreshLog, 300);
+  _logKeywordTimer = setTimeout(function() { _sumCatClear(); refreshLog(); }, 300);
 }
 function logFilterParams() {
   var kw = document.getElementById('logKeyword') ? document.getElementById('logKeyword').value.trim() : '';
   var lv = document.getElementById('logLevel') ? document.getElementById('logLevel').value : '';
   var hh = document.getElementById('logHours') ? document.getElementById('logHours').value : '0';
   var ff = document.getElementById('logFile') ? document.getElementById('logFile').value : '';
-  return 'keyword=' + encodeURIComponent(kw) + '&level=' + encodeURIComponent(lv) + '&hours=' + encodeURIComponent(hh) + '&file=' + encodeURIComponent(ff);
+  // v1.28.1（V28-04）：错误类别下钻。chip 点下后按 category=<key> 让后端用该类的
+  // 完整关键词集过滤，而不是只填一个 kw（旧实现实测 5 条 → 只剩 1 条）。
+  var ct = window._logSumCat || '';
+  return 'keyword=' + encodeURIComponent(kw) + '&level=' + encodeURIComponent(lv)
+    + '&hours=' + encodeURIComponent(hh) + '&file=' + encodeURIComponent(ff)
+    + (ct ? '&category=' + encodeURIComponent(ct) : '');
 }
 function fillLogFiles(files, current) {
   var sel = document.getElementById('logFile');
@@ -1027,12 +1032,19 @@ function refreshLog() {
 function _sumBucketClick(key) {
   var el = document.getElementById('logKeyword');
   if (!el) return;
-  // 填的是日志里真实出现的关键词（服务端下发的 kw），不是显示名 ——
-  // 首版填显示名「截图 / 识别失败」，日志里没有这个字面串，命中 0 条。
+  // v1.28.1（V28-04）：改为按类别 key 下钻 —— 后端用该类完整关键词集过滤，
+  // 命中的行数与聚合条标注必然一致。关键词框同时填上该类的代表性关键词，
+  // 让用户看得见「现在按什么在筛」。
+  // 旧实现把 kw 填进关键词框走单关键词过滤，每类有 2~6 个关键词 → 必然漏行
+  // （实测标注 5 条、点进去只剩 1 条）。
   var kw = (window._logSumKw && window._logSumKw[key]) || '';
-  if (!kw) return;
+  window._logSumCat = key;
   el.value = kw;
   refreshLog();
+}
+function _sumCatClear() {
+  // 用户手动改关键词/级别/时间窗时退出类别下钻，避免筛出「0 条」的困惑。
+  window._logSumCat = '';
 }
 function fmtClock(ts) {
   try {
@@ -1174,6 +1186,7 @@ function submitPanelAction(action) {
 fabSetState(null);
 
 function resetLogFilter() {
+  window._logSumCat = '';
   if (document.getElementById('logKeyword')) document.getElementById('logKeyword').value = '';
   if (document.getElementById('logLevel')) document.getElementById('logLevel').value = '';
   if (document.getElementById('logHours')) document.getElementById('logHours').value = '0';

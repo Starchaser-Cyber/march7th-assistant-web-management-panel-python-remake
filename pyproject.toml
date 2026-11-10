@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "m7a-panel"
-version = "1.24.7"
+version = "1.28.1"
 description = "M7A 云游戏容器管理面板（Python 迁移版，FastAPI + 原生 JS）"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -27,7 +27,9 @@ dependencies = [
     "uvicorn[standard]>=0.29",
     "httpx>=0.27",
     "bcrypt>=4.1",
-    "python-multipart>=0.0.18",
+    # v1.28.1（V28-03）：0.0.21 命中 6 个 2026 年 PYSEC，其中参数走私
+    # PYSEC-2026-3037 在本项目真实服务上未登录即可利用。0.0.31 修复全部六项。
+    "python-multipart>=0.0.31",
     "jinja2>=3.1.6",
     "websockets>=12",
 ]
@@ -38,6 +40,10 @@ dependencies = [
 # 合法 YAML」，生产代码里**不** import pyyaml（解析走自带的 yaml_read_simple）。
 dev = [
     "pytest>=8",
+    # v1.28.1（V28-02）：两个测试文件用了 @pytest.mark.asyncio，但此前四个依赖
+    # 声明文件都没有它 —— 按 ci.yml 新建环境会因 --strict-markers 收集阶段
+    # 直接 2 errors、1395 项测试一项都跑不了。
+    "pytest-asyncio>=0.23",
     "ruff>=0.6",
     "pyyaml>=6",
     "pytest-asyncio>=0.24",
@@ -61,6 +67,7 @@ testpaths = ["panel_migr/tests"]
 addopts = "--strict-markers"
 markers = [
     "slow: 耗时较长的用例（网络/子进程），本地可用 -m 'not slow' 跳过",
+    # asyncio marker 由 pytest-asyncio 插件注册（v1.28.1 起显式声明为 dev 依赖）
 ]
 
 [tool.setuptools]

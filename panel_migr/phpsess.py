@@ -81,15 +81,44 @@ def php_empty(v) -> bool:
 
 
 def load_session(request) -> dict:
-    """按 cookie PHPSESSID 读取 /tmp/sess_<sid>。无效/缺失 → {}。"""
+    """按 cookie PHPSESSID 读取 /tmp/sess_<sid>。无效/缺失 → {}。
+
+    v1.28.1（V28-01）：读成功后**刷新会话文件 mtime**。
+    `session_gc()` 只按 `st_mtime` 判超龄，而本函数此前是纯 read_text()，
+    `csrf_field()` 又只在 session 缺 CSRF token 时才写盘（登录时 `_issue_csrf()`
+    已落盘），于是**登录后的普通请求全都不刷新 mtime** —— TTL 实际退化成
+    「绝对寿命」，用户持续使用满 TTL 后会被小时级 GC 静默删会话、踢下线。
+
+    等价于 PHP 的 `session_start()`：每次读到会话就续期。安全口径：
+    仅对非符号链接的普通文件 utime（不跟随链接），任何 OSError 只记 debug
+    日志、不影响本次请求。
+    """
     sid = request.cookies.get("PHPSESSID", "")
     if not sid or not _SID_RE.fullmatch(sid):
         return {}
+    path = Path(SESSION_SAVE_PATH) / f"sess_{sid}"
     try:
-        text = (Path(SESSION_SAVE_PATH) / f"sess_{sid}").read_text("utf-8", errors="replace")
+        text = path.read_text("utf-8", errors="replace")
     except OSError:
         return {}
-    return parse_session(text)
+    session = parse_session(text)
+    _touch_session(path, session)
+    return session
+
+
+def _touch_session(path: Path, session: dict) -> None:
+    """会话续期：刷新 mtime（`session_gc()` 的唯一判据）。失败静默。"""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return
+    # P1-12 口径：绝不跟随符号链接
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+        return
+    try:
+        os.utime(path, None)
+    except OSError as exc:            # pragma: no cover - 权限/竞态等极端情况
+        log.debug("刷新会话 mtime 失败 %s: %s", path.name, exc)
 
 
 def is_auth(session: dict) -> bool:

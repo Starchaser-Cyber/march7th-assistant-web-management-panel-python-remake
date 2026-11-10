@@ -70,13 +70,34 @@ def fake_run_cmd(monkeypatch):
 
 @pytest.fixture
 def h264_present(monkeypatch):
-    """假定机器有 libx264（不真探测）：让 ws264 用例与机器环境解耦。
+    """**真实探测**本机可用的 H.264 编码器（v1.28.1 / V28-06），并给 which 打桩。
 
-    v1.28.0 补桩：ffmpeg_available() 除编码器缓存外还会 shutil.which(ffmpeg)。
-    ffmpeg_available() 为假时 WS 直接回「H.264 档不可用」，token 校验根本走不到
-    ——CI runner 可能没装 ffmpeg（2026-11-07 实锤 test_ws264_rejects_bad_token 红），
-    which 一并打桩，用例才真正与机器环境解耦。
+    两条修复合一：
+
+    * v1.28.0（c6fc7b7）：`ffmpeg_available()` 除编码器缓存外还会 `shutil.which("ffmpeg")`。
+      which 为假时 WS 直接回「H.264 档不可用」，token 校验根本走不到 —— CI runner 可能没装
+      ffmpeg（2026-11-07 实锤 `test_ws264_rejects_bad_token` 红）。故 which 必须打桩。
+    * v1.28.1（V28-06）：旧实现直接 `_ENC_CACHE = [...]` 伪造编码器存在，再调用真 ffmpeg ——
+      本机 ffmpeg 若 `--disable-libx264` 用例必红，且报错是 `KeyError: 'bytes'`（WS 关闭帧
+      没有 bytes 字段），完全看不出根因。更实质的问题：这是**唯一一条 ws264 端到端出画用例**，
+      伪造缓存导致 V1.24.5 新增的 libopenh264 / h264_vaapi / h264_nvenc / h264_qsv 降级链
+      在端到端层面零覆盖。
+
+    现在：which 打桩（环境解耦）→ 清缓存 → 走生产代码的**真实探测** →
+    一个可用编码器都没有就 skip，有则把真实编码器名交给用例生成 ffmpeg 参数。
     """
+    monkeypatch.setattr(pv.shutil, "which", lambda *a, **k: "/usr/bin/ffmpeg")
+    pv.reset_codec_cache()
+    codec = pv.h264_codec()
+    if codec is None:
+        pytest.skip("本机无可用 H.264 编码器（ffmpeg -encoders 未命中任何候选）")
+    yield codec
+    pv.reset_codec_cache()
+
+
+@pytest.fixture
+def h264_mock_libx264(monkeypatch):
+    """仅用于「探测→参数」纯逻辑用例：用缓存伪造 libx264 存在（不跑 ffmpeg）。"""
     pv._ENC_CACHE = [" V....D libx264              libx264 H.264 / AVC (codec h264)"]
     monkeypatch.setattr(pv.shutil, "which", lambda *a, **k: "/usr/bin/ffmpeg")
     yield
@@ -338,7 +359,7 @@ def test_ws264_rejects_when_ffmpeg_missing(fake_run_cmd, bypass_health, monkeypa
     assert "ffmpeg" in msg
 
 
-def test_ws264_rejects_bad_token(fake_run_cmd, bypass_health, h264_present):
+def test_ws264_rejects_bad_token(fake_run_cmd, bypass_health, h264_mock_libx264):
     _write_secret("s" * 48)
     with client.websocket_connect("/m7a-preview/ws264?token=wrong") as ws:
         msg = ws.receive_text()
@@ -346,9 +367,15 @@ def test_ws264_rejects_bad_token(fake_run_cmd, bypass_health, h264_present):
 
 
 def test_ws264_pipeline_emits_fmp4(fake_run_cmd, bypass_health, monkeypatch, h264_present):
-    """真 ffmpeg：JPEG 帧 → H.264 fMP4 字节流（ftyp/moof box 特征）。"""
+    """真 ffmpeg：JPEG 帧 → H.264 fMP4 字节流（ftyp/moof box 特征）。
+
+    v1.28.1（V28-06）：编码器来自 `h264_present` 的**真实探测**结果，
+    本机没有可用 H.264 编码器时由夹具 skip，而不是伪造 libx264 后必红。
+    """
     if shutil.which(cfg.FFMPEG_BIN) is None:
         pytest.skip("本机无 ffmpeg，跳过真转码用例")
+    # 夹具返回真实编码器名；生产代码 build_ffmpeg_args() 也用它，二者必然一致
+    assert h264_present in pv._ENC_CANDIDATES
     jpeg = _make_jpeg()
     port = _start_ws_upstream(jpeg)
     monkeypatch.setattr(cfg, "PREVIEW_UPSTREAM_PORT", port)
