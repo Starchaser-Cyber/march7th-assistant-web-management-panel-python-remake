@@ -181,8 +181,15 @@ def test_outcome_daily_clamps_days():
 
 # ================= 4. 日志窗口读取（monkeypatch run_cmd，不碰真实文件） =================
 
-def test_extract_for_task_reads_only_window(monkeypatch):
-    log = Path("/tmp/m1_fake.log")
+def test_extract_for_task_reads_only_window(monkeypatch, tmp_path):
+    """只统计窗口内的日志行（monkeypatch run_cmd，不碰真实文件）。
+
+    v1.28.2 补隔离：原实现硬编码 `/tmp/m1_fake.log`。该路径在 /tmp 下、属主是首次
+    运行的用户，换一个用户（如 root）再跑时受 `fs.protected_regular` 内核保护，
+    `open(O_CREAT)` 直接 PermissionError —— 用例与机器状态耦合。改用 pytest 的
+    `tmp_path`（每个用例独立目录、属主就是当前用户）。
+    """
+    log = tmp_path / "m1_fake.log"
     log.write_text("\n".join([
         "2026-10-03 07:00:00,000 | INFO | 第9次副本完成",   # 窗口之前
         "2026-10-03 08:01:00,000 | INFO | 第1次副本完成",   # 窗口内

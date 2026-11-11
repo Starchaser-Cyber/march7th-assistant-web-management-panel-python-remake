@@ -70,7 +70,16 @@ def test_config_raw_plain_text():
     assert "power_enable" in r.text
 
 
-def test_preview_token_missing_secret():
+def test_preview_token_missing_secret(monkeypatch):
+    """secret 文件缺失时的降级响应。
+
+    v1.28.2 补隔离：`preview_secret()` 优先读 `config.PREVIEW_SECRET_FILE`，
+    否则回落 `{DEFAULT_DIR}/logs/preview_secret`。部署过预览服务的机器上后者真实存在
+    （本机即如此），用例会读到真 secret 而返回 ok=True —— 与"缺失"语义相反。
+    这里把 `PREVIEW_SECRET_FILE` 指向一个不存在的路径，用例才真正测"缺失"分支。
+    """
+    monkeypatch.setattr(cfg, "PREVIEW_SECRET_FILE",
+                        str(Path(__file__).resolve().parent / "_tmp" / "no_such_preview_secret"))
     r = get("ajax=preview_token")
     d = r.json()
     assert d["ok"] is False and "preview_secret" in d["msg"]
