@@ -55,10 +55,42 @@ def sock_json(path: str, timeout: float = 3.0):
         status = int(head.split(b" ", 2)[1])
     except (IndexError, ValueError):
         return -1, None
+    body = _dechunk(head, body)
     try:
         return status, json.loads(body.decode("utf-8", "replace"))
     except ValueError:
         return status, None
+
+
+def _dechunk(head: bytes, body: bytes) -> bytes:
+    """解 `Transfer-Encoding: chunked`（Docker Engine API 一律用 chunked，无 Content-Length）。
+
+    不加这一步的后果（v1.28.2 修）：body 形如 `1e9c\r\n{...json...}\r\n0\r\n\r\n`，
+    `json.loads` 必然抛 ValueError → `sock_json` 返回 `(200, None)` → 调用方看到
+    "status 不是 200 就走回退" 的判断失效（status 其实是 200），但 `j` 为 None，
+    于是每一处 `container_info` / 容器统计都静默退回 `docker inspect` 子进程。
+    功能上没坏（CLI 也能拿到数据），但每条路径多 fork 一个 docker 进程，
+    且**新加的 Health 字段只能靠 CLI 的 format 字符串取**——HTTP 这条本该更快的
+    主路径完全没用上。发现方式：`curl --unix-socket` 看响应头有 chunked。
+    """
+    lowered = head.lower()
+    if b"transfer-encoding:" not in lowered or b"chunked" not in lowered:
+        return body
+    out = b""
+    rest = body
+    while rest:
+        line, sep, rest = rest.partition(b"\r\n")
+        if not sep:
+            break
+        try:
+            size = int(line.strip().split(b";")[0] or b"0", 16)
+        except ValueError:
+            return body          # 不是合法 chunked，原样交给上层（让它自己失败）
+        if size == 0:
+            break
+        out += rest[:size]
+        rest = rest[size + 2:] if len(rest) >= size + 2 else b""
+    return out or body
 
 
 def _epoch(iso) -> int:
@@ -74,19 +106,38 @@ def _epoch(iso) -> int:
     return ts if ts > 0 else 0
 
 
+def _empty_info() -> dict:
+    """container_info 的完整字段骨架（v1.28.2 加 health 系列，调用方 .get 兜底）。"""
+    return {"id": "", "running": False, "started": 0,
+            "health": "", "health_since": 0, "health_fails": 0,
+            "restarting": False, "oom_killed": False}
+
+
 def container_info(name: str, refresh: bool = False) -> dict:
     """{id, running, started}；Engine API 约 14ms，1 秒缓存，socket 不可用回退 docker CLI。"""
     now = time.monotonic()
     hit = _INFO_CACHE.get(name)
     if hit is not None and not refresh and now - hit["ts"] < 1.0:
         return hit["info"]
-    info = {"id": "", "running": False, "started": 0}
+    info = _empty_info()
     st, j = sock_json(f"/containers/{name}/json", 3.0)
     if st == 200 and isinstance(j, dict):
         state = j.get("State") or {}
-        info = {"id": str(j.get("Id") or ""),
-                "running": bool(state.get("Running")),
-                "started": _epoch(state.get("StartedAt"))}
+        health = state.get("Health") or {}
+        info = {
+            "id": str(j.get("Id") or ""),
+            "running": bool(state.get("Running")),
+            "started": _epoch(state.get("StartedAt")),
+            # v1.28.2：容器自身 healthcheck 结论（compose 里配的 pgrep python main.py）。
+            # 空串表示该容器没有配 healthcheck（或 Docker 尚未跑第一次探测）。
+            "health": str(health.get("Status") or "").lower(),
+            "health_since": _epoch((health.get("Log") or [{}])[-1].get("Start"))
+                            if isinstance(health.get("Log"), list) and health.get("Log")
+                            else 0,
+            "health_fails": int(health.get("FailingStreak") or 0),
+            "restarting": bool(state.get("Restarting")),
+            "oom_killed": bool(state.get("OOMKilled")),
+        }
     else:
         info = _cli_info(name)
     _INFO_CACHE[name] = {"ts": now, "info": info}
@@ -96,11 +147,17 @@ def container_info(name: str, refresh: bool = False) -> dict:
 def _cli_info(name: str) -> dict:
     from services.shell import run_cmd
     from shlex import quote
-    r = run_cmd("docker inspect -f '{{.Id}} {{.State.Running}} {{.State.StartedAt}}' " + quote(name))
+    r = run_cmd("docker inspect -f '{{.Id}} {{.State.Running}} {{.State.StartedAt}} "
+                "{{if .State.Health}}{{.State.Health.Status}}{{end}}' " + quote(name))
     parts = (r.get("out") or "").split()
     if r.get("code") == 0 and len(parts) >= 3:
-        return {"id": parts[0], "running": parts[1].lower() == "true", "started": _epoch(parts[2])}
-    return {"id": "", "running": False, "started": 0}
+        out = _empty_info()
+        out.update({"id": parts[0],
+                    "running": parts[1].lower() == "true",
+                    "started": _epoch(parts[2]),
+                    "health": parts[3].lower() if len(parts) >= 4 else ""})
+        return out
+    return _empty_info()
 
 
 # ---------- cgroup ----------

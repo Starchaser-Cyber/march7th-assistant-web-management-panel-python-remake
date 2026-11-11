@@ -1559,7 +1559,10 @@ var _alertFilter = { kind: '', from: '', to: '' };
 var ALERT_KIND = {
   down:      { cls: 'down',      icon: '🔴', label: '异常' },
   recovered: { cls: 'recovered', icon: '🟢', label: '恢复' },
-  aborted:   { cls: 'aborted',   icon: '🟠', label: '中断' }
+  aborted:   { cls: 'aborted',   icon: '🟠', label: '中断' },
+  /* v1.28.2：容器 Running 但 healthcheck 连续失败（区别于 down：进程还在） */
+  unhealthy:           { cls: 'unhealthy', icon: '🟡', label: '亚健康' },
+  unhealthy_recovered: { cls: 'recovered', icon: '🟢', label: '恢复' }
 };
 function alertKindMeta(k) { return ALERT_KIND[k] || { cls: 'other', icon: '⚪', label: (k || '事件') }; }
 function alertDayKey(ts) {
@@ -1620,6 +1623,8 @@ function alertTimelineShell() {
       +   '<option value="down">异常（down）</option>'
       +   '<option value="recovered">恢复（recovered）</option>'
       +   '<option value="aborted">中断（aborted）</option>'
+      +   '<option value="unhealthy">亚健康（unhealthy）</option>'
+      +   '<option value="unhealthy_recovered">亚健康恢复</option>'
       + '</select>'
       + '<input type="datetime-local" id="alertTlFrom" class="alert-tl-dt" onchange="alertTlApply()">'
       + '<span class="alert-tl-sep">→</span>'

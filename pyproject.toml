@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "m7a-panel"
-version = "1.28.1"
+version = "1.28.2"
 description = "M7A 云游戏容器管理面板（Python 迁移版，FastAPI + 原生 JS）"
 readme = "README.md"
 requires-python = ">=3.11"

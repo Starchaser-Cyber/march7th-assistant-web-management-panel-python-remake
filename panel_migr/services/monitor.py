@@ -151,6 +151,37 @@ def container_started(inst: dict) -> int:
     return int(sm.container_info(inst["container"]).get("started") or 0)
 
 
+def container_health(inst: dict) -> dict:
+    """容器 healthcheck 结论（v1.28.2）。
+
+    返回 {health, failing, since, oom_killed}：
+      health  'healthy' / 'unhealthy' / 'starting' / ''（未配 healthcheck）
+      failing State.Health.FailingStreak（连续失败次数）
+      since   最近一次探测时间（epoch 秒），0 表示没有探测记录
+      oom_killed 上一次退出是否因 OOM 被杀（Docker 会保留这个标记）
+
+    为什么需要它：面板原先只看 `State.Running`，于是「容器在跑但内部任务持续
+    失败 / 内存被打满即将 OOM」这一整类故障对用户完全不可见——11-10 那台机器
+    上容器 Running=True 持续了十几个小时，实际每轮任务都失败、云游戏时长被烧光。
+    """
+    info = sm.container_info(inst["container"])
+    running = bool(info.get("running"))
+    health = str(info.get("health") or "")
+    # 容器已退出时 Docker 会把最后一次探测结论（通常是 unhealthy）留在
+    # State.Health 里。直接透传会让页面显示「容器活着但病了」，而实际是「容器
+    # 根本没在跑」—— 那是 down 的语义。这里归一到 ''，让 UI 和告警都按
+    # Running 分派，避免同一状态两套说法。
+    if not running:
+        health = ""
+    return {
+        "health": health,
+        "failing": int(info.get("health_fails") or 0) if running else 0,
+        "since": int(info.get("health_since") or 0),
+        "oom_killed": bool(info.get("oom_killed")),
+        "restarting": bool(info.get("restarting")),
+    }
+
+
 def monitor_interval() -> int:
     cfg = panel_config()
     try:

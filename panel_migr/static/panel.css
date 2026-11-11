@@ -1008,6 +1008,7 @@ html[data-theme="light"] .card { background:var(--glass-bg); }
 .alert-tl-dot.down { background:var(--red); }
 .alert-tl-dot.recovered { background:var(--green); }
 .alert-tl-dot.aborted { background:var(--orange); }
+.alert-tl-dot.unhealthy { background:var(--orange); }
 .alert-tl-main { flex:1 1 auto; min-width:0; }
 .alert-tl-row { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
 .alert-tl-time { font-size:11px; color:var(--muted); white-space:nowrap; }
@@ -1016,6 +1017,7 @@ html[data-theme="light"] .card { background:var(--glass-bg); }
 .alert-tl-kind.down { color:var(--red); border-color:var(--red); }
 .alert-tl-kind.recovered { color:var(--green); border-color:var(--green); }
 .alert-tl-kind.aborted { color:var(--orange); border-color:var(--orange); }
+.alert-tl-kind.unhealthy { color:var(--orange); border-color:var(--orange); }
 .alert-tl-push { margin-left:auto; }
 .alert-tl-badge { font-size:10.5px; padding:1px 8px; border-radius:999px; white-space:nowrap; }
 .alert-tl-badge.ok { background:var(--green-bg); color:var(--green); }

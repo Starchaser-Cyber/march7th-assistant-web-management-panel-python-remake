@@ -636,6 +636,70 @@ def _down_body(first: bool = False, delayed: bool = False) -> str:
     return body
 
 
+def _observe_unhealthy_edge(inst: dict, s: dict, run: bool, quiet: bool,
+                            events_out: list) -> None:
+    """检测 healthcheck unhealthy 边沿（v1.28.2）。
+
+    与 `_observe_down_edge` 的 down 边沿互补：容器 `Running=True` 但内部
+    healthcheck 连续失败时，面板原先完全无感。典型场景是 m7a 的
+    `pgrep -f 'python main.py'` 探测连续 3 次失败（主进程卡死/被内核干掉但
+    容器还没退出），或未来换成 HTTP/业务探针后任务链路彻底断掉。
+
+    独立记账字段 `alerted_unhealthy`，与 `alerted_down` 互不干扰：
+    - 只有 run=True 时才评估（容器停了这个边沿归 down 管，避免同一故障推两条）
+    - unhealthy → healthy 时推一条 recovered
+    - 静默期同 down 一致：先记 `pending_unhealthy`，结束后补推
+
+    为什么 event kind 单独用 `unhealthy`/`unhealthy_recovered` 而不是复用
+    down/recovered：面板的推送文案、severity 分级、告警历史筛选都按 kind 分派，
+    复用会让用户看到「容器意外停止」而实际容器在跑，属误导。
+    """
+    if not run:
+        # 容器没在跑：down 边沿自己会报，这里不重复；同时清掉 unhealthy 记账，
+        # 免得容器重启后带着上次的 unhealthy 状态一路误报。
+        return
+    try:
+        from services.monitor import container_health
+        h = container_health(inst)
+    except Exception:
+        return
+    health = str(h.get("health") or "")
+    if not health:
+        # 容器没配 healthcheck（旧版 compose）：不评估，保持历史行为
+        return
+    unhealthy = health == "unhealthy"
+    s["prev_unhealthy"] = unhealthy          # 仅记录，供下次 tick / 排查用
+    if unhealthy and not s.get("alerted_unhealthy"):
+        if quiet:
+            s["pending_unhealthy"] = True
+            log.info("静默期内检测到容器 unhealthy（连续失败 %s 次），"
+                     "已记 pending_unhealthy", h.get("failing"))
+        else:
+            events_out.append(("unhealthy", "容器内部异常",
+                               _unhealthy_body(h), "critical"))
+            s["alerted_unhealthy"] = True
+    elif (not unhealthy) and s.get("alerted_unhealthy"):
+        events_out.append(("unhealthy_recovered", "容器已恢复健康",
+                           "✅ 容器内部健康检查恢复正常\n容器已在运行且探针通过。",
+                           "info"))
+        s["alerted_unhealthy"] = False
+
+
+def _unhealthy_body(h: dict) -> str:
+    """unhealthy 推送正文：把「容器还活着但内部坏了」讲清楚，避免和 down 混淆。"""
+    fails = int(h.get("failing") or 0)
+    body = ("⚠️ 容器内部健康检查失败\n"
+            "容器进程仍在运行，但健康探针连续失败，任务可能已经卡住或反复报错。\n"
+            "建议到面板看日志，必要时重启容器。")
+    if fails:
+        body += f"\n连续失败次数：{fails}"
+    if h.get("oom_killed"):
+        body += "\n注意：上一次退出是被 OOM 杀掉的，内存可能仍然不够。"
+    if h.get("restarting"):
+        body += "\n注意：容器处于 restarting 状态。"
+    return body
+
+
 def _observe_down_edge(s: dict, prev, run, quiet: bool, events_out: list) -> None:
     """检测 up→down 边沿（含 Q-04 的「首次观测即 down」），按静默期决定记账还是推送。
 
@@ -779,6 +843,8 @@ def alert_tick(inst: dict, force: bool = False) -> dict:
             quiet = before_deadline(now, s.get("quiet_until"))
             events_out: list = []   # (kind, title, body, severity)
             _observe_down_edge(s, prev, run, quiet, events_out)
+            # v1.28.2：容器 Running 但 healthcheck unhealthy 也算故障边沿
+            _observe_unhealthy_edge(inst, s, run, quiet, events_out)
             _flush_pending_down(s, run, quiet, events_out)
             _scan_aborted(inst, s, quiet, events_out)
             if events_out:
@@ -1366,7 +1432,19 @@ def alert_health(inst: dict) -> dict:
         "last_ok": 0, "last_fail": 0, "fail_msg": "", "fail_kind": "",
         "streak": 0, "pending": 0, "retry_count": 0, "backoff_until": 0,
         "level": "off", "label": "告警未启用", "color": "gray", "detail": "",
+        # v1.28.2：容器自身 healthcheck 快照（与通道健康分开呈现，互不覆盖）
+        "container_health": "", "container_fails": 0, "container_oom": False,
     }
+    # 无论告警是否启用都带上容器健康——用户即使没配推送，也该在页面上看到
+    # 「容器还活着但内部探针一直失败」。这也是 v1.28.2 加 healthcheck 的意义。
+    try:
+        from services.monitor import container_health
+        _ch = container_health(inst)
+        out["container_health"] = str(_ch.get("health") or "")
+        out["container_fails"] = int(_ch.get("failing") or 0)
+        out["container_oom"] = bool(_ch.get("oom_killed"))
+    except Exception:
+        pass
     if not enabled:
         out["detail"] = "勾选「启用告警」后才会评估通道健康"
         return out
