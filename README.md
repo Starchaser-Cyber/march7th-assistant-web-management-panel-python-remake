@@ -4,8 +4,8 @@
 
 ![许可证](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![Python 版本](https://img.shields.io/badge/python-3.11%2B-green)
-![最新版本](https://img.shields.io/badge/version-V1.28.1-orange)
-![构建状态](https://img.shields.io/badge/build-1%2C393%20tests-brightgreen)
+![最新版本](https://img.shields.io/badge/version-V1.28.2-orange)
+![构建状态](https://img.shields.io/badge/build-1%2C435%20tests-brightgreen)
 ![Stars](https://img.shields.io/github/stars/Starchaser-Cyber/march7th-assistant-web-management-panel-python-remake?style=flat)
 
 ---
@@ -19,7 +19,14 @@
 | 直接装起来用 | [快速开始](#-快速开始) |
 | 装了但不会用 | [使用指南](#-使用指南) |
 | 想改配置 / 调参数 | [配置项速查](#-配置项速查) |
-| 出问题了 | [常见问题](#-常见问题) · [故障排查](#-故障排查) |
+| 出问题了 | [常见问题](#-常见问题) · **[运维维护手册](MAINTENANCE.md)** |
+| 部署小助手本体 | [小助手运维](#-小助手运维docker-场景) · [运维维护手册](MAINTENANCE.md) |
+| 参与开发 | [贡献指南](#-贡献指南) · [面板开发与测试](MAINTENANCE.md#附录-c-面板开发与测试) |
+
+> 🔧 **遇到故障请先看 [`MAINTENANCE.md`](./MAINTENANCE.md)。**
+> 那是一份 1,800+ 行的运维维护手册，按「现象 → 先查什么 → 常见原因 → 处理」组织，
+> 覆盖容器 OOM、死循环、云游戏识别失败、配置被截断、预览不可达等 40+ 种真实故障，
+> 并附 5 个完整案例复盘。本文档只保留**面板自身**的常见问题。
 
 ---
 
@@ -139,6 +146,26 @@
 ## 🆕 近期版本亮点
 
 > 完整变更见 [`CHANGELOG.md`](./CHANGELOG.md)。下面只列用户能感知到的部分。
+
+### V1.28.2（2026-11-11）— 容器"亚健康"终于看得见
+
+| 之前 | 现在 |
+|---|---|
+| 面板只读 `State.Running`，容器进程还在但**卡死**（任务反复抛异常、python 僵在死循环）完全看不出来 | 接入 Docker `healthcheck`，连续 3 次探针失败推 **critical「容器内部异常」**，恢复推「已恢复健康」 |
+| 「容器停了」和「容器活着但病了」混在一起 | 两种告警独立记账、独立触发，`unhealthy` 不复用 `down` 的文案 |
+| Docker Engine API 的 chunked 响应从没被解开过，`container_info` 一直静默退回 `docker inspect` 子进程 | 新增 `_dechunk()`，走 HTTP 主路径，不再多 fork 进程 |
+
+**顺带**：新增 [`MAINTENANCE.md`](./MAINTENANCE.md) 运维维护手册（1,873 行 / 23 章），取代本文档原来的故障排查段落。
+
+> 💡 想给你的小助手容器也配上健康检查？见 [维护手册 2.2 参考 compose](MAINTENANCE.md#22-参考-compose本机生产版)。
+
+### V1.28.1（2026-11-11）— 第三方全方位审计 9 条缺陷全修
+
+其中三条用户能直接感知：
+
+- **活跃会话不再被 TTL 静默回收**：之前你白天一直在点，晚上回来被踢下线——因为 TTL 按「最后一次写盘」算，读不续期。现在按「最后一次读取」算。
+- **日志聚合条点进去条数对上了**：之前「网络 5 条」点一下只剩 1 条（只把类别里第一个关键词填进搜索框）。现在按类别过滤，`count(category)` 恒等于标注数。
+- **`python-multipart` 0.0.21 → 0.0.33**：0.0.21 命中 6 个 2026 年 PYSEC，其中参数走私那条**未登录即可利用**。
 
 ### V1.24.6（2026-10-30）— 在线更新修复
 
@@ -582,7 +609,8 @@ journalctl -u m7a-panel -f      # 实时查看面板日志
 ├── README.md                      # 本文件
 ├── LICENSE                        # GPL-3.0 许可证全文
 ├── CHANGELOG.md                   # 完整更新日志
-├── TROUBLESHOOTING.md             # 故障排查实战记录
+├── MAINTENANCE.md                 # 运维维护手册（容器/面板/预览/日志全部故障）
+├── TROUBLESHOOTING.md             # H.264 预览排错实战记录（历史存档）
 ├── build_package.py               # 打包脚本（发布包 / 审计包 / 交接包）
 ├── release.sh                     # 发版流水线（检查 / 打包 / 推送 / 建 Release）
 ├── .gitignore                     # 忽略敏感文件与运行时产物
@@ -627,6 +655,9 @@ journalctl -u m7a-panel -f      # 实时查看面板日志
 ---
 
 ## ❓ 常见问题
+
+> 本节只讲**面板自身**的问题。小助手容器（OOM / 死循环 / 云游戏识别 / 配置截断 / 预览）
+> 的问题请查 [`MAINTENANCE.md` 第 12 章 故障速查表](./MAINTENANCE.md#第-12-章-故障速查表按现象查)。
 
 **1. 启动报 `ModuleNotFoundError: No module named 'bcrypt'`（或其他依赖）？**
 
@@ -689,15 +720,160 @@ Python 版写监控文件采用原子写，正常使用不会再损坏；若检�
 
 **12. 测试出现少量失败正常吗？**
 
-582 项用例中，`test_kernel_guard_blocks_ocreate_reference`（需要「他人属主」的文件，普通用户造不出来）与 `test_apply_zip_keeps_existing_venv`（会真实调用 `systemctl restart`）依赖 root 与 systemd 环境，在普通开发机上失败属预期，不影响功能。
+1,435 项用例中，`test_kernel_guard_blocks_ocreate_reference`（需要「他人属主」的文件，普通用户造不出来）与 `test_apply_zip_keeps_existing_venv`（会真实调用 `systemctl restart`）依赖 root 与 systemd 环境，在普通开发机上失败属预期，不影响功能。
+
+**13. 面板显示容器「亚健康」是什么意思？**
+
+容器进程还在跑，但 Docker 的健康探针（`healthcheck`）连续失败。**和「容器已停止」不是一回事**：
+
+| 状态 | 含义 | 该怎么办 |
+|---|---|---|
+| 已停止 | 进程没了 | 启动容器 |
+| **亚健康** | 进程还在，但卡住 / 反复报错 | 看容器日志定位，必要时重启 |
+
+> 注意：容器**正常退出后**，Docker 会把最后一次探测结论（通常 unhealthy）留在 `State.Health` 里。
+> V1.28.2 起面板会按 `Running` 归一，不会把「容器根本没在跑」错报成「亚健康」。
+
+**14. 为什么我看不到容器的健康状态？**
+
+因为你给容器配的 compose 里没有 `healthcheck`。加上就行：
+
+```yaml
+healthcheck:
+  test: ["CMD-SHELL", "pgrep -f 'python main.py' >/dev/null || exit 1"]
+  interval: 60s
+  timeout: 10s
+  retries: 3
+  start_period: 120s
+```
+
+改完必须 `docker compose up -d --force-recreate` 才生效（改文件不重建容器，`HostConfig` 还是旧的）。
+验证：`docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' m7a` 应该输出 `healthy`。
+
+**15. 维护文档在哪、和 README 什么关系？**
+
+| 文档 | 职责 |
+|---|---|
+| `README.md`（本文） | 面板是什么、怎么装、怎么用 |
+| [`MAINTENANCE.md`](./MAINTENANCE.md) | **运维手册**：容器/面板/预览/日志遇到的所有故障，按现象查 |
+| [`CHANGELOG.md`](./CHANGELOG.md) | 每个版本改了什么，为什么改 |
+| [`TROUBLESHOOTING.md`](./TROUBLESHOOTING.md) | H.264 预览那一次排错的完整过程存档 |
 
 ---
 
 ## 🔧 故障排查
 
-H.264 预览从「未安装 ffmpeg」到「必现 403」再到「凌晨才会复现的令牌时区坑」，完整的真实排错过程（每一步的命令、手工 WebSocket 握手脚本、根因代码对比与修复）已整理成文档：
+### 分层看：面板问题 vs 小助手问题
 
-📖 **[TROUBLESHOOTING.md — 故障排查实战记录](./TROUBLESHOOTING.md)**
+| 故障范围 | 去哪看 |
+|---|---|
+| **面板打不开 / 登录 / WebSocket / 在线更新** | 本文档 [常见问题](#-常见问题) |
+| **小助手容器 OOM / 死循环 / 云游戏识别失败 / 配置被截断 / 预览不可达** | 📖 **[`MAINTENANCE.md` 第 12 章 故障速查表](./MAINTENANCE.md#第-12-章-故障速查表按现象查)** |
+| **H.264 预览排错全过程**（从「未安装 ffmpeg」到「凌晨才复现的令牌时区坑」） | 📖 [`TROUBLESHOOTING.md`](./TROUBLESHOOTING.md) |
+
+### 维护者的三件套（出任何事先跑这三条）
+
+```bash
+# ① 容器活着吗
+sudo docker inspect -f 'Status={{.State.Status}} ExitCode={{.State.ExitCode}} RestartCount={{.RestartCount}} Health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' m7a
+
+# ② 最近日志（必须去 ANSI 色码，否则关键字 grep 不到）
+sudo docker logs --tail 100 m7a 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -v "^[+|]"
+
+# ③ 是否被 OOM 杀过
+sudo journalctl -k --since "today" | grep -i "out of memory" | tail -5
+```
+
+### 三条最容易踩的坑
+
+| 坑 | 一句话 |
+|---|---|
+| **环境变量覆盖配置文件** | compose 里的 `MARCH7TH_*` 优先级高于 `config.yaml`，面板改了配置可能无效 —— 见 [维护手册 4.1](MAINTENANCE.md#41-️-环境变量优先级高于配置文件) |
+| **日志带 ANSI 色码** | `grep "invalid session id"` 会 0 命中，必须先 `sed` 去色 |
+| **改 compose 不 recreate 不生效** | 必须 `up -d --force-recreate`，否则内存限制 / ENV 全是旧的 |
+
+---
+
+## 🐳 小助手运维（Docker 场景）
+
+面板只是"看"和"管"，真正干活的是**三月七小助手容器**。容器出问题，面板再好也救不回来。这部分讲怎么把小助手本身跑稳。
+
+### 参考 compose（生产验证版）
+
+```yaml
+services:
+  m7a:
+    image: ghcr.nju.edu.cn/moesnow/march7thassistant:latest
+    container_name: m7a
+    restart: on-failure:3          # 真崩最多 3 次，不无脑重启
+    init: true                     # tini 回收僵尸
+    shm_size: 1g
+    mem_limit: 4g                  # 实测峰值 1.86G，留一倍余量
+    memswap_limit: 4g
+    environment:
+      - MARCH7TH_LOG_LEVEL=INFO
+      - MARCH7TH_AFTER_FINISH=Loop   # 每天定时跑（官方默认）
+      - MARCH7TH_BROWSER_HEADLESS_ENABLE=true
+      - MARCH7TH_BROWSER_HEADLESS_RESTART_ON_NOT_LOGGED_IN=false
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./config.yaml:/m7a/config.yaml
+      - ./logs:/m7a/logs
+      - ./3rdparty/WebBrowser/UserProfile:/m7a/3rdparty/WebBrowser/UserProfile
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'python main.py' >/dev/null || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+```
+
+**每一行为什么这么写** —— 见 [维护手册 2.2](MAINTENANCE.md#22-参考-compose本机生产版)。
+
+### 四个必须知道的点
+
+| 点 | 说明 |
+|---|---|
+| **`AFTER_FINISH=Loop` 才是"每天定时跑"** | 官方 Docker.md 默认值就是 Loop；`Exit` 是"跑一次就退"。Loop 在等待前会先 `stop_game()` 关浏览器，**不占云游戏时长** |
+| **`mem_limit` 必须配** | 不配的话 python 能涨到 5.4G 拖垮宿主；配了才安全，但**前提是先修内存泄漏**（见下） |
+| **config.yaml 是单文件挂载** | `os.replace()` 会报 `EBUSY`，上游降级为**非原子写入**，极小概率被截断。建议挂个守护脚本（见维护手册 4.5） |
+| **`preview_server.py` 不在发布包里** | 面板预览依赖它，但它只在 `logs/` 目录里，**重装时最容易丢**（见维护手册第 9 章） |
+
+### 已知的上游内存缺陷（可打补丁缓解）
+
+三月七小助手的 `screen.py` 有两处会让内存在 4G 上限下必然 OOM：
+
+1. **界面识别开 57 个线程**，`shutdown(wait=False)` 不等待 → 线程跨轮堆积
+2. **模板图片无缓存**，每秒 490 次 `np.fromfile` + `cv2.imdecode`
+
+这两处已通过**只读挂载补丁**修掉（不改镜像，升级后自动保留），内存峰值从 **3.7G 降到 1.86G**。补丁文件与验证方法见 [维护手册附录 B](MAINTENANCE.md#附录-b-上游代码补丁说明)。
+
+### 容器出问题了怎么办
+
+一句话：**先看 [维护手册第 12 章 故障速查表](MAINTENANCE.md#第-12-章-故障速查表按现象查)**，按「现象」找。
+
+三个最常见的：
+
+| 现象 | 最可能的原因 | 快速处理 |
+|---|---|---|
+| 容器不停重启 | `ExitCode=137` = OOM | `journalctl -k \| grep -i "out of memory"`，见 [维护手册第 5 章](MAINTENANCE.md#第-5-章-内存与性能) |
+| 日志刷 `invalid session id` | 上一轮 chrome 半死 | 停容器 → 确认 `ss -tlnp \| grep 922` 为空 → 冷启动 |
+| 面板预览报 `preview_server 不可达` | 预览服务没起 | `docker exec -d m7a python3 /m7a/logs/preview_server.py` |
+
+---
+
+## 📚 相关文档
+
+| 文档 | 内容 |
+|---|---|
+| [`MAINTENANCE.md`](./MAINTENANCE.md) | **运维维护手册**（1,873 行 / 23 章 / 40+ 故障排查条目 / 5 个案例复盘） |
+| [`CHANGELOG.md`](./CHANGELOG.md) | 完整变更日志（每个版本逐条说明，含现场与根因） |
+| [`TROUBLESHOOTING.md`](./TROUBLESHOOTING.md) | H.264 预览排错实战记录（v1.19 时期的完整排查过程） |
 
 文档里的排查方法（哈希比对密钥、绕开面板手工握手、双端时间口径核对）同样适用于你部署时遇到的任何预览类问题。
 

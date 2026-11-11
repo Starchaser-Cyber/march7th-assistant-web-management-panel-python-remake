@@ -1,5 +1,129 @@
 # Changelog
 
+## V1.28.2（2026-11-11）
+
+**一句话总结**：把「容器病了」这件事从**看不见**变成**看得见**，顺手修掉一个从上线起就存在、但一直静默降级的 HTTP 解析 bug；另外新增一份 1,873 行的运维维护手册，取代 README 里零散的故障排查段落。
+
+### 1. 容器健康状态接入面板告警（新功能）
+
+**背景**：之前面板只读 `State.Running`，容器进程还在但已经卡死（比如任务反复抛异常、python 僵在死循环）这种情况**完全看不出来**。2026-11-10 那次事故里，容器 `Running=true` 但实际一整天 0 个任务成功。
+
+**改动**：
+
+- `services/sysmetrics.py`：`container_info()` 增加 5 个字段 —— `health`（State.Health.Status 小写）、`health_since`（最后一次探测时间）、`health_fails`（FailingStreak）、`restarting`、`oom_killed`。Engine API 和 CLI 两条路径都取。
+- `services/monitor.py`：新增 `container_health(inst)` 快照函数。
+- `services/alerts.py`：新增 `_observe_unhealthy_edge()` 边沿检测 —— 容器 `Running=true` 但 healthcheck 连续失败时推 **critical**「容器内部异常」，恢复时推 **info**「容器已恢复健康」。
+- 前端：`ALERT_KIND` 增加 `unhealthy`（🟡 亚健康）/ `unhealthy_recovered`（🟢 恢复）配色与筛选项。
+- `alert_health()` 增加 `container_health` / `container_fails` / `container_oom` 三个快照字段，**即使没启用推送也带上**——用户没配推送通道，也该在页面上看到容器出问题。
+
+**三个必须说清楚的设计决定**：
+
+1. **kind 不复用 `down` / `recovered`**。复用会推「容器意外停止」，而容器明明在跑 —— 这是误导，不是简化。
+2. **独立记账 `alerted_unhealthy`**，与 `alerted_down` 互不干扰。容器停归 down 管；`run=False` 时 `_observe_unhealthy_edge` 直接 return，避免同一故障推两条告警。
+3. **容器已退出时把 health 归一为 `''`**。Docker 会把最后一次探测结论（通常 `unhealthy`）留在 `State.Health` 里，直接透传会让页面显示「容器活着但病了」，而实际是「根本没在跑」——那是 down 的语义。实测验证：
+
+```
+容器已停止 → {'health': '', 'failing': 0, ...}      ✅
+容器运行中 → {'health': 'healthy', 'failing': 0}     ✅
+```
+
+### 2. 修复 `sock_json` 从未解开 chunked（真 bug）
+
+**这个 bug 从面板上线第一天就存在，一直静默降级。**
+
+Docker Engine API 一律回 `Transfer-Encoding: chunked`（无 `Content-Length`），响应体形如：
+
+```
+1e9c\r\n{"Id":"66fa91a5..."}\r\n0\r\n\r\n
+```
+
+原实现把这整段（带 chunked 帧头）直接交给 `json.loads()`，**必然 ValueError** → 返回 `(200, None)` → 所有 `container_info()` 静默退回 `docker inspect` 子进程。
+
+**后果**：功能不坏（CLI 也能拿到数据），但
+
+- 每次采样多 fork 一个进程
+- 新加的 `Health` 字段只能靠 CLI 的 `--format` 字符串取，HTTP 主路径完全没用上
+
+**发现方式**：
+
+```bash
+curl -s --unix-socket /var/run/docker.sock -D - -o /dev/null http://docker/containers/x/json
+# 响应头里有 Transfer-Encoding: chunked
+```
+
+**修法**：新增 `_dechunk(head, body)`，按响应头 `transfer-encoding: chunked` 判断，逐 chunk 取 `int(line.split(b";")[0], 16)` 长度切分，`0` 结束；非 chunked 响应原样返回。
+
+**修复后实测**：
+
+```
+sock_json -> status 200 | json is dict: True
+Running= False Health= unhealthy FailingStreak= 0 OOMKilled= False
+```
+
+### 3. 版本号三处统一到 1.28.2
+
+V1.28.1 漏了 `panel_migr/config.py` 的 `PANEL_VERSION`（还是 `1.28.1`）、README badge、`release.sh` 的 `VER`。本次一并校正。
+
+### 4. 新增运维维护手册 `MAINTENANCE.md`
+
+**1,873 行 / 69,608 字节 / 23 章 / 336 行表格 / 140 个代码块。**
+
+这份文档要取代 README 里零散的「常见问题」和「故障排查」，以及 `TROUBLESHOOTING.md`（只覆盖 H.264 预览一件事）。
+
+**覆盖内容**：
+
+| 章 | 内容 |
+|---|---|
+| 0 | 五分钟快速上手（出事先跑哪三条命令） |
+| 1 | 系统全貌（拓扑、路径、端口、镜像版本、sudo 三坑） |
+| 2 | 部署与升级（首次部署、参考 compose 逐行理由、升级流程、**补丁兼容性检查**） |
+| 3 | 日常运维（启停、Loop 定时模式、`after_finish` 各取值、手动触发、浏览器登录） |
+| 4 | 配置管理（**环境变量优先级陷阱**、config.yaml 非原子写入、配置守护） |
+| 5 | 内存与性能（实测内存曲线、两个根因、"为什么以前没问题"取证书） |
+| 6 | 云游戏与浏览器（**invalid session id 完整根因链**、界面识别失败、端口冲突、云游戏时长） |
+| 7 | 监控与告警（健康看板六档、unhealthy 与 down 的区别、**告警通道是坏的**） |
+| 8 | 面板（服务管理、venv 路径坑、访问不了怎么办、Nginx 反代、在线更新、会话安全） |
+| 9 | 游戏画面预览（工作原理、**preview_server 不在发布包**、面板侧契约、重建方法、排障） |
+| 10 | 日志体系（**ANSI 色码坑**、轮转、等级、分析命令） |
+| 11 | 备份与回滚（五类回滚点 + 具体命令） |
+| 12 | **故障速查表**（按现象查，6 大类共 40+ 条） |
+| 13 | **故障案例库**（5 个真实案例，含误判复盘） |
+| 14 | 已知缺陷清单（上游 6 条 / 面板 8 条 / 未解 6 条） |
+| 15 | 容量与风险 |
+| 16 | 变更记录 |
+| 附录 A | 常用命令速查 |
+| 附录 B | 上游代码补丁说明（治什么/改法/验证/维护要点） |
+| 附录 C | 面板开发与测试 |
+| 附录 D | 术语表 |
+
+**特别值得看的几节**：
+
+- [6.2 `invalid session id` 死循环](MAINTENANCE.md#62-️-invalid-session-id-死循环2026-11-11-排查出的) —— 完整根因链，附"为什么 grep 不到"
+- [13.3 案例 C：Loop 被误认为"病"](MAINTENANCE.md#133-案例-cloop-被误认为病) —— 一次真实的**误判复盘**：我最初把官方的 `AFTER_FINISH=Loop` 当成死循环根源，建议改成 `Exit`，取证后才发现 Loop 本身没病
+- [5.3 "为什么以前没问题"](MAINTENANCE.md#53-为什么以前没问题) —— 每个疑点都给了核实结果
+
+### 5. 文档校正
+
+- 所有数字与线上核对：镜像 `v2026.11.8 / 4253b8cddbb1 / revision 17ec9ddc`、config.yaml `45429B / 356 字段 / sha256 a63893fcb23874e9`、测试基线 `1435 passed, 1 skipped`
+- 明确标注 `save_config os.replace 失败 EBUSY` 是**无损的正常降级**，不要当故障处理
+
+### 测试
+
+```
+新增 test_v1282_healthcheck_alert.py  15 项
+新增 test_v1282_sock_chunked.py        6 项
+全量：1435 passed, 1 skipped（基线 1410 + 17，无回归）
+ruff：All checks passed!
+```
+
+### 部署
+
+- 线上 `/www/wwwroot/m7a-panel/panel_migr/` 已更新并重启验证
+- 回滚点：`backups/pre-v1.28.2-20261111-205507.tar.gz`
+- 顺带 `systemctl daemon-reload`，消除长期存在的「unit file changed on disk」陈旧警告
+
+---
+
 ## V1.28.1（2026-11-11）
 
 **一句话总结**：不是新功能，而是把 2026-11-10 第三方全方位审计的 9 条缺陷逐条修掉 —— 其中两条是真 bug（活跃会话被 TTL 回收、日志聚合条点进去条数对不上），两条是安全（python-multipart 六个 PYSEC），其余是「交出去跑不起来 / 数据不可复现」的工程债。
